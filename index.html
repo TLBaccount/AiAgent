@@ -7,7 +7,6 @@
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            /* Votre dégradé futuriste */
             background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d);
             color: #fff;
             max-width: 600px;
@@ -19,65 +18,135 @@
             box-sizing: border-box;
             background-attachment: fixed;
         }
-        h1 { text-align: center; font-size: 24px; margin-bottom: 20px; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
-        #chat { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 20px; height: 60vh; overflow-y: auto; padding: 20px; margin-bottom: 15px; backdrop-filter: blur(12px); }
-        .user { text-align: right; background: linear-gradient(90deg, #00d2ff, #3a7bd5); color: white; padding: 10px 15px; border-radius: 15px 15px 0 15px; margin-bottom: 10px; display: block; max-width: 80%; margin-left: auto; box-shadow: 0 4px 15px rgba(0, 210, 255, 0.2); white-space: pre-wrap; }
-        .bot { text-align: left; background: rgba(255, 255, 255, 0.95); color: #1e3c72; padding: 15px; border-radius: 15px 15px 15px 0; margin-bottom: 10px; display: block; max-width: 90%; box-shadow: 0 4px 10px rgba(0,0,0,0.1); line-height: 1.6; }
+        h1 {
+            text-align: center;
+            font-size: 28px;
+            margin-bottom: 20px;
+            color: #fff;
+            text-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            letter-spacing: 1px;
+        }
+        #chat {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            height: 60vh;
+            overflow-y: auto;
+            padding: 20px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(12px);
+            box-shadow: inset 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .user {
+            text-align: right;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 20px 20px 0 20px;
+            margin-bottom: 15px;
+            display: block;
+            max-width: 80%;
+            margin-left: auto;
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
+            white-space: pre-wrap;
+            font-size: 16px;
+        }
+        .bot {
+            text-align: left;
+            background: rgba(255, 255, 255, 0.95);
+            color: #1e3c72;
+            padding: 20px;
+            border-radius: 20px 20px 20px 0;
+            margin-bottom: 15px;
+            display: block;
+            max-width: 90%;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            line-height: 1.7;
+            font-size: 16px;
+        }
         .bot h1, .bot h2, .bot h3 { margin: 10px 0 5px 0; font-size: 18px; color: #145288; }
         .bot p { margin: 5px 0; }
         .bot ul { margin: 5px 0; padding-left: 20px; }
         .bot li { margin: 3px 0; }
         .bot strong { color: #145288; }
         
-        /* Zone de saisie moderne */
-        .input-group { display: flex; gap: 10px; background: rgba(255, 255, 255, 0.1); padding: 8px; border-radius: 50px; border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px); align-items: center; }
-        input { flex: 1; padding: 15px 20px; border: none; background: transparent; outline: none; color: #fff; font-size: 16px; }
-        input::placeholder { color: rgba(255, 255, 255, 0.7); }
+        /* Zone de saisie renforcée */
+        .input-group {
+            display: flex;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 12px;
+            border-radius: 60px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(12px);
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
         
-        /* Boutons Modernes */
-        button { border: none; cursor: pointer; font-weight: bold; color: white; transition: all 0.3s ease; }
-        #sendBtn { padding: 0 25px; border-radius: 50px; font-size: 16px; background: linear-gradient(90deg, #00d2ff, #00a8cc); box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4); }
-        #sendBtn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 210, 255, 0.6); }
+        input {
+            flex: 1;
+            padding: 18px 20px;
+            border: none;
+            background: transparent;
+            outline: none;
+            color: #fff;
+            font-size: 17px;
+        }
+        input::placeholder { color: rgba(255, 255, 255, 0.6); }
         
-        /* Bouton Vocal Unifié (Micro / Stop) */
+        /* Bouton Envoyer : Grand et lumineux */
+        #sendBtn {
+            padding: 18px 35px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: bold;
+            background: linear-gradient(90deg, #00d2ff, #00a8cc);
+            box-shadow: 0 5px 20px rgba(0, 210, 255, 0.5);
+            transition: all 0.3s ease;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        #sendBtn:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 8px 30px rgba(0, 210, 255, 0.7); }
+        
+        /* Bouton Vocal Unifié : Grand et rond, retour au Rose/Violet */
         #voiceBtn {
-            width: 50px;
+            width: 65px;
+            height: 65px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #00c6ff, #0072ff); /* Dégradé Bleu Cyan Futuriste */
-            box-shadow: 0 4px 15px rgba(0, 198, 255, 0.4);
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            box-shadow: 0 5px 20px rgba(236, 72, 153, 0.5);
             position: relative;
+            transition: all 0.3s ease;
         }
         #voiceBtn:hover { transform: scale(1.05); }
         
-        /* État "Speaking" (Agent en train de parler) */
+        /* État "Speaking" (Stop) : Rouge Néon / Magenta futuriste */
         #voiceBtn.speaking {
-            background: linear-gradient(135deg, #f83600, #fe8c00); /* Dégradé Orange/Rouge "Stop" */
-            box-shadow: 0 4px 20px rgba(248, 54, 0, 0.6);
+            background: linear-gradient(135deg, #ff0f7b, #f89b29);
+            box-shadow: 0 0 25px rgba(255, 15, 123, 0.8);
             animation: pulse 1.5s infinite;
         }
         
         /* Gestion des icônes */
-        #voiceBtn svg { width: 20px; height: 20px; fill: white; pointer-events: none; }
+        #voiceBtn svg { width: 28px; height: 28px; fill: white; pointer-events: none; }
         #stopIcon { display: none; }
         #voiceBtn.speaking #microIcon { display: none; }
         #voiceBtn.speaking #stopIcon { display: block; }
 
         /* Animation futuriste de pulsation */
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(248, 54, 0, 0.7); }
-            70% { box-shadow: 0 0 0 12px rgba(248, 54, 0, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(248, 54, 0, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(255, 15, 123, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(255, 15, 123, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 15, 123, 0); }
         }
     </style>
 </head>
 <body>
     <h1>Agent IA</h1>
-    <div id="chat"></div>
-    
-        <div class="input-group">
+    <div class="input-group">
         <input type="text" id="userInput" placeholder="Écrivez ou parlez...">
         <button id="sendBtn" onclick="sendMessage()">Envoyer</button>
         <button id="voiceBtn" onclick="handleVoiceButton()" title="Parler / Arrêter">
@@ -85,7 +154,6 @@
             <svg id="stopIcon" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
         </button>
     </div>
-
     <script>
         // Vos informations Supabase
         const SUPABASE_URL = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
