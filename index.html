@@ -7,7 +7,6 @@
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            /* Votre dégradé personnalisé */
             background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d);
             color: #fff;
             max-width: 600px;
@@ -17,7 +16,7 @@
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
-            background-attachment: fixed; /* Pour que le dégradé reste fixe sur mobile */
+            background-attachment: fixed;
         }
         h1 {
             text-align: center;
@@ -27,20 +26,18 @@
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         #chat {
-            /* Fond légèrement transparent pour laisser voir le dégradé */
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
             height: 60vh;
             overflow-y: auto;
             padding: 20px;
             margin-bottom: 15px;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(12px);
         }
         .user {
             text-align: right;
-            /* Cyan assorti à la fin du dégradé */
-            background: #0891b2; 
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
             color: white;
             padding: 10px 15px;
             border-radius: 15px 15px 0 15px;
@@ -49,12 +46,12 @@
             max-width: 80%;
             float: right;
             clear: both;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.2);
         }
         .bot {
             text-align: left;
-            background: rgba(255, 255, 255, 0.95);
-            color: #333;
+            background: rgba(255, 255, 255, 0.9);
+            color: #1e3c72;
             padding: 10px 15px;
             border-radius: 15px 15px 15px 0;
             margin-bottom: 10px;
@@ -62,47 +59,75 @@
             max-width: 80%;
             float: left;
             clear: both;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         }
+        
+        /* Zone de saisie moderne et légère */
         .input-group {
             display: flex;
             gap: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px;
+            border-radius: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
         }
+        
         input {
             flex: 1;
-            padding: 15px;
-            border-radius: 25px;
+            padding: 15px 20px;
             border: none;
+            background: transparent;
             outline: none;
+            color: #fff;
             font-size: 16px;
-            background: rgba(255, 255, 255, 0.95);
-            color: #333;
         }
-        button {
-            padding: 0 20px;
-            border-radius: 25px;
+        input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        /* Bouton Envoyer : contraste maximal + effet lumineux */
+        #sendBtn {
+            padding: 0 25px;
+            border-radius: 50px;
             border: none;
             cursor: pointer;
             font-weight: bold;
-            color: white;
             font-size: 16px;
-            transition: transform 0.1s;
+            color: #fff;
+            background: linear-gradient(90deg, #00d2ff, #00a8cc);
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4);
+            transition: all 0.3s ease;
         }
-        button:active {
-            transform: scale(0.95);
+        #sendBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 210, 255, 0.6);
         }
-        /* Bouton Envoyer assorti au dégradé */
-        #sendBtn {
-            background: #145288;
-        }
-        #sendBtn:hover { background: #1a477d; }
         
-        /* Bouton Micro reste rouge pour l'affordance (on sait que c'est pour parler/arrêter) */
+        /* Bouton Micro : fini le rouge archaïque, place à un dégradé moderne */
         #micBtn {
-            background: #dc3545;
-            width: 60px;
+            width: 50px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            box-shadow: 0 4px 15px rgba(236, 72, 153, 0.4);
+            transition: all 0.3s ease;
         }
-        #micBtn:hover { background: #c82333; }
+        #micBtn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(236, 72, 153, 0.6);
+        }
+        
+        /* Icône du micro (SVG) */
+        #micBtn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
     </style>
 </head>
 <body>
@@ -111,7 +136,12 @@
 <div class="input-group">
     <input type="text" id="userInput" placeholder="Écrivez ou parlez...">
     <button id="sendBtn" onclick="sendMessage()">Envoyer</button>
-    <button id="micBtn" onclick="startListening()">🎤</button>
+    <button id="micBtn" onclick="startListening()" title="Parler">
+        <svg viewBox="0 0 24 24">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+        </svg>
+    </button>
 </div>
 
     <script>
