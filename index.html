@@ -23,12 +23,9 @@
     <button id="micBtn" onclick="startListening()">🎤 Parler</button>
 
     <script>
-        // Votre clé Groq (celle qui commence par gsk_)
-        const apiKey = "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"; 
-
-        // Vos informations Supabase (celles que vous venez de copier)
-        const SUPABASE_URL = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
-        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmbWdrZHB2cXF2bHpub2dmdXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4ODE2ODIsImV4cCI6MjEwNDQ1NzY4Mn0.KAgI6CBPW9URVG0cf9qn2t2GHsgmZNCwymkuLVgojlE";
+        // Vos informations Supabase (celles que vous avez copiées tout à l'heure)
+        const SUPABASE_URL = "https://pfmgkdpvqplznogfuzi.supabase.co"; // Votre URL
+        const SUPABASE_KEY = "eyJ..."; // Votre clé anon (celle qui commence par eyJ...)
 
         const chatDiv = document.getElementById('chat');
         const input = document.getElementById('userInput');
@@ -78,8 +75,7 @@
             }
         }
 
-        
-            // 3. Envoyer un message et obtenir une réponse de l'IA (avec Permissions)
+        // 3. Envoyer un message et obtenir une réponse de l'IA
         async function sendMessage() {
             const userText = input.value;
             if (!userText) return;
@@ -90,111 +86,46 @@
             history.push({ role: "user", content: userText });
             saveMessage("user", userText); // Sauvegarde
 
-            // --- DÉBUT : LOGIQUE DES PERMISSIONS ET ACTIONS ---
-            
-            // 1. Définir le mot de passe vocal (Phrase secrète)
-            const motDePasse = "code alpha"; 
-
-            // 2. Définir les actions possibles
-            if (userText.toLowerCase().includes("quelle heure") || userText.toLowerCase().includes("l'heure")) {
-                const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-                const reponseAction = `Il est actuellement ${heure}.`;
-                
-                if (userText.toLowerCase().includes(motDePasse)) {
-                    // Si le mot de passe est présent, on autorise
-                    chatDiv.innerHTML += `<div class="bot">Agent: ${reponseAction}</div>`;
-                    history.push({ role: "assistant", content: reponseAction });
-                    saveMessage("assistant", reponseAction);
-                    speakText(reponseAction);
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                    return;
-                } else {
-                    // Si pas de mot de passe, on refuse poliment
-                    const refus = "Désolé, cette action nécessite le mot de passe vocal. Dites 'Code alpha' avant votre demande.";
-                    chatDiv.innerHTML += `<div class="bot" style="color:orange;">Agent: ${refus}</div>`;
-                    history.push({ role: "assistant", content: refus });
-                    saveMessage("assistant", refus);
-                    speakText(refus);
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                    return;
-                }
-            }
-            
-            // Action 2 : Donner la date
-            if (userText.toLowerCase().includes("quelle date") || userText.toLowerCase().includes("aujourd'hui")) {
-                const date = new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-                const reponseAction = `Nous sommes le ${date}.`;
-                
-                if (userText.toLowerCase().includes(motDePasse)) {
-                    chatDiv.innerHTML += `<div class="bot">Agent: ${reponseAction}</div>`;
-                    history.push({ role: "assistant", content: reponseAction });
-                    saveMessage("assistant", reponseAction);
-                    speakText(reponseAction);
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                    return;
-                } else {
-                    const refus = "Désolé, cette action nécessite le mot de passe vocal. Dites 'Code alpha' avant votre demande.";
-                    chatDiv.innerHTML += `<div class="bot" style="color:orange;">Agent: ${refus}</div>`;
-                    history.push({ role: "assistant", content: refus });
-                    saveMessage("assistant", refus);
-                    speakText(refus);
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                    return;
-                }
-            }
-
-            // --- FIN : LOGIQUE DES PERMISSIONS ET ACTIONS ---
-
-            // Si ce n'est pas une action spéciale, on utilise l'IA normale
             try {
-                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                // On envoie maintenant la requête à notre serveur sécurisé (api/chat.js)
+                const response = await fetch("/api/chat", {
                     method: "POST",
                     headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": `Bearer ${apiKey}`
+                        "Content-Type": "application/json"
                     },
-                    body: JSON.stringify({
-                        model: "openai/gpt-oss-20b",
-                        messages: [
-                            { role: "system", content: "Tu es un assistant personnel. Si l'utilisateur parle en Darija (algérien), réponds en Darija avec les expressions locales. Si l'utilisateur parle en français, réponds en français. Si l'utilisateur parle en arabe, réponds en arabe. Sois naturel et amical." },
-                            ...history
-                        ]
-                    })
+                    body: JSON.stringify({ message: userText, history: history })
                 });
 
                 if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
                 const data = await response.json();
-                const botText = data.choices[0].message.content;
+                const botText = data.reply; // On récupère la réponse du serveur
                 
                 chatDiv.innerHTML += `<div class="bot">Agent: ${botText}</div>`;
                 history.push({ role: "assistant", content: botText });
                 saveMessage("assistant", botText); // Sauvegarde
-                speakText(botText);
+                speakText(botText); // Voix
                 chatDiv.scrollTop = chatDiv.scrollHeight;
 
             } catch (error) {
                 chatDiv.innerHTML += `<div class="bot" style="color:red;">Erreur: ${error.message}</div>`;
             }
         }
-                // Fonction pour parler à voix haute
-        function speakText(text) {
-            // On annule toute lecture en cours pour éviter que les réponses se superposent
-            window.speechSynthesis.cancel();
-            
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'fr-FR'; // L'agent parle en français (il adaptera le ton pour le darija)
-            utterance.rate = 1.0;     // Vitesse normale
-            utterance.pitch = 1.0;    // Ton normal
 
-            // Sélectionne une voix française si disponible
+        // Fonction pour parler à voix haute
+        function speakText(text) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'fr-FR';
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
             const voices = window.speechSynthesis.getVoices();
             const frenchVoice = voices.find(voice => voice.lang.startsWith('fr'));
             if (frenchVoice) {
                 utterance.voice = frenchVoice;
             }
-
             window.speechSynthesis.speak(utterance);
         }
+
         // 4. Fonction Microphone (Reconnaissance vocale)
         function startListening() {
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
