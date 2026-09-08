@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent IA Multilingue</title>
-       <style>
+    <title>ESSE</title>
+    <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            /* Votre dégradé personnalisé */
+            background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d);
             color: #fff;
             max-width: 600px;
             margin: 0 auto;
@@ -16,15 +17,17 @@
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
+            background-attachment: fixed; /* Pour que le dégradé reste fixe sur mobile */
         }
         h1 {
             text-align: center;
             font-size: 24px;
             margin-bottom: 20px;
-            color: #fff;
+            color: #ffffff;
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         #chat {
+            /* Fond légèrement transparent pour laisser voir le dégradé */
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: 15px;
@@ -36,7 +39,8 @@
         }
         .user {
             text-align: right;
-            background: #007bff;
+            /* Cyan assorti à la fin du dégradé */
+            background: #0891b2; 
             color: white;
             padding: 10px 15px;
             border-radius: 15px 15px 0 15px;
@@ -45,10 +49,11 @@
             max-width: 80%;
             float: right;
             clear: both;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         .bot {
             text-align: left;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             color: #333;
             padding: 10px 15px;
             border-radius: 15px 15px 15px 0;
@@ -57,6 +62,7 @@
             max-width: 80%;
             float: left;
             clear: both;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         .input-group {
             display: flex;
@@ -69,7 +75,7 @@
             border: none;
             outline: none;
             font-size: 16px;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             color: #333;
         }
         button {
@@ -80,20 +86,27 @@
             font-weight: bold;
             color: white;
             font-size: 16px;
+            transition: transform 0.1s;
         }
+        button:active {
+            transform: scale(0.95);
+        }
+        /* Bouton Envoyer assorti au dégradé */
         #sendBtn {
-            background: #28a745;
+            background: #145288;
         }
+        #sendBtn:hover { background: #1a477d; }
+        
+        /* Bouton Micro reste rouge pour l'affordance (on sait que c'est pour parler/arrêter) */
         #micBtn {
             background: #dc3545;
             width: 60px;
         }
-        #sendBtn:hover { background: #218838; }
         #micBtn:hover { background: #c82333; }
     </style>
 </head>
 <body>
-    <h1>Agent IA</h1>
+    <h1>ESSE</h1>
     <div id="chat"></div>
 <div class="input-group">
     <input type="text" id="userInput" placeholder="Écrivez ou parlez...">
