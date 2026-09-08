@@ -176,6 +176,25 @@
                 chatDiv.innerHTML += `<div class="bot" style="color:red;">Erreur: ${error.message}</div>`;
             }
         }
+                // Fonction pour parler à voix haute
+        function speakText(text) {
+            // On annule toute lecture en cours pour éviter que les réponses se superposent
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'fr-FR'; // L'agent parle en français (il adaptera le ton pour le darija)
+            utterance.rate = 1.0;     // Vitesse normale
+            utterance.pitch = 1.0;    // Ton normal
+
+            // Sélectionne une voix française si disponible
+            const voices = window.speechSynthesis.getVoices();
+            const frenchVoice = voices.find(voice => voice.lang.startsWith('fr'));
+            if (frenchVoice) {
+                utterance.voice = frenchVoice;
+            }
+
+            window.speechSynthesis.speak(utterance);
+        }
         // 4. Fonction Microphone (Reconnaissance vocale)
         function startListening() {
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
