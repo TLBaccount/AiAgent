@@ -45,7 +45,7 @@
                         "Authorization": `Bearer ${apiKey}`
                     },
                     body: JSON.stringify({
-                        model: "qwen/qwen3-32b",
+                        model: "openai/gpt-oss-20b",
                         messages: [
                             { role: "system", content: "Tu es un assistant personnel virtuel. Tu réponds en Français, en Arabe et en Darija Algérien selon la langue utilisée par l'utilisateur. Sois naturel, amical et précis." },
                             ...history
