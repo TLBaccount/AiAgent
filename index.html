@@ -10,20 +10,22 @@
         .user { text-align: right; color: blue; margin-bottom: 5px; }
         .bot { text-align: left; color: green; margin-bottom: 5px; }
         input, button { padding: 10px; font-size: 16px; }
-        input { width: 70%; }
-        button { width: 25%; background: #007bff; color: white; border: none; cursor: pointer; }
+        input { width: 60%; }
+        button { width: 20%; background: #007bff; color: white; border: none; cursor: pointer; }
+        #micBtn { width: 15%; background: #dc3545; }
     </style>
 </head>
 <body>
     <h1>Agent IA</h1>
     <div id="chat"></div>
-    <input type="text" id="userInput" placeholder="Écrivez votre message...">
+    <input type="text" id="userInput" placeholder="Écrivez ou parlez...">
     <button onclick="sendMessage()">Envoyer</button>
+    <button id="micBtn" onclick="startListening()">🎤 Parler</button>
 
     <script>
-        // IMPORTANT : On récupère la clé depuis Vercel. Si elle n'est pas trouvée, on affiche une erreur claire.
-        const apiKey = "VOTRE_CLE_GROQ";
-        
+        // VOTRE CLE API ICI (Remplacez par votre vraie clé gsk_...)
+        const apiKey = "gsk_VOTRE_CLE_ICI"; 
+
         const chatDiv = document.getElementById('chat');
         const input = document.getElementById('userInput');
         let history = [];
@@ -47,28 +49,18 @@
                     body: JSON.stringify({
                         model: "openai/gpt-oss-20b",
                         messages: [
-                            { role: "system", content: "Tu es un assistant personnel virtuel. Tu réponds en Français, en Arabe et en Darija Algérien selon la langue utilisée par l'utilisateur. Sois naturel, amical et précis." },
+                            { role: "system", content: "Tu es un assistant personnel. Si l'utilisateur parle en Darija (algérien), réponds en Darija avec les expressions locales. Si l'utilisateur parle en français, réponds en français. Si l'utilisateur parle en arabe, réponds en arabe. Sois naturel et amical." },
                             ...history
                         ]
                     })
                 });
 
-                // Vérifie si la réponse de l'API est correcte
-                if (!response.ok) {
-                    throw new Error(`Erreur HTTP ${response.status}: ${await response.text()}`);
-                }
-
+                if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
                 const data = await response.json();
+                const botText = data.choices[0].message.content;
                 
-                // Vérification de sécurité pour éviter l'erreur 'reading 0'
-                if (data.choices && data.choices.length > 0 && data.choices[0].message) {
-                    const botText = data.choices[0].message.content;
-                    chatDiv.innerHTML += `<div class="bot">Agent: ${botText}</div>`;
-                    history.push({ role: "assistant", content: botText });
-                } else {
-                    throw new Error("Réponse inattendue de l'API Groq.");
-                }
-                
+                chatDiv.innerHTML += `<div class="bot">Agent: ${botText}</div>`;
+                history.push({ role: "assistant", content: botText });
                 chatDiv.scrollTop = chatDiv.scrollHeight;
 
             } catch (error) {
@@ -76,10 +68,25 @@
             }
         }
 
-        input.addEventListener("keypress", function(event) {
-            if (event.key === "Enter") {
+        // Fonction Microphone (Reconnaissance vocale)
+        function startListening() {
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'fr-FR'; // Pour capter le français et le darija
+            recognition.start();
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                input.value = transcript;
                 sendMessage();
-            }
+            };
+
+            recognition.onerror = function(event) {
+                alert("Micro non autorisé ou erreur : " + event.error);
+            };
+        }
+
+        input.addEventListener("keypress", function(event) {
+            if (event.key === "Enter") sendMessage();
         });
     </script>
 </body>
