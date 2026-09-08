@@ -13,7 +13,7 @@ export default async function handler(req, res) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
             return res.status(200).json({ reply: `Il est actuellement ${heure}.` });
         } else {
-            return res.status(200).json({ reply: "Désolé, cette action nécessite le mot de passe vocal. Dites 'Code alpha' avant votre demande." });
+            return res.status(200).json({ reply: "Désolé, je ne peux pas effectuer cette action. Vérifiez vos autorisations." });
         }
     }
 
