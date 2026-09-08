@@ -21,7 +21,9 @@
     <button onclick="sendMessage()">Envoyer</button>
 
     <script>
-        const apiKey = "VOTRE_CLE_GROQ"; // Remplacez par votre clé Groq
+        // IMPORTANT : On récupère la clé depuis Vercel. Si elle n'est pas trouvée, on affiche une erreur claire.
+        const apiKey = import.meta.env.VITE_GROQ_API_KEY;
+        
         const chatDiv = document.getElementById('chat');
         const input = document.getElementById('userInput');
         let history = [];
@@ -51,11 +53,22 @@
                     })
                 });
 
+                // Vérifie si la réponse de l'API est correcte
+                if (!response.ok) {
+                    throw new Error(`Erreur HTTP ${response.status}: ${await response.text()}`);
+                }
+
                 const data = await response.json();
-                const botText = data.choices[0].message.content;
                 
-                chatDiv.innerHTML += `<div class="bot">Agent: ${botText}</div>`;
-                history.push({ role: "assistant", content: botText });
+                // Vérification de sécurité pour éviter l'erreur 'reading 0'
+                if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                    const botText = data.choices[0].message.content;
+                    chatDiv.innerHTML += `<div class="bot">Agent: ${botText}</div>`;
+                    history.push({ role: "assistant", content: botText });
+                } else {
+                    throw new Error("Réponse inattendue de l'API Groq.");
+                }
+                
                 chatDiv.scrollTop = chatDiv.scrollHeight;
 
             } catch (error) {
