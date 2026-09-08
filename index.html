@@ -5,12 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agent IA Multilingue</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d); color: #fff; max-width: 600px; margin: 0 auto; padding: 20px; height: 100vh; display: flex; flex-direction: column; box-sizing: border-box; background-attachment: fixed; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            /* Votre dégradé futuriste */
+            background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d);
+            color: #fff;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            background-attachment: fixed;
+        }
         h1 { text-align: center; font-size: 24px; margin-bottom: 20px; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
         #chat { background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 20px; height: 60vh; overflow-y: auto; padding: 20px; margin-bottom: 15px; backdrop-filter: blur(12px); }
         .user { text-align: right; background: linear-gradient(90deg, #00d2ff, #3a7bd5); color: white; padding: 10px 15px; border-radius: 15px 15px 0 15px; margin-bottom: 10px; display: block; max-width: 80%; margin-left: auto; box-shadow: 0 4px 15px rgba(0, 210, 255, 0.2); white-space: pre-wrap; }
-        
-        /* Styles pour les réponses de l'agent (Markdown converti en HTML) */
         .bot { text-align: left; background: rgba(255, 255, 255, 0.95); color: #1e3c72; padding: 15px; border-radius: 15px 15px 15px 0; margin-bottom: 10px; display: block; max-width: 90%; box-shadow: 0 4px 10px rgba(0,0,0,0.1); line-height: 1.6; }
         .bot h1, .bot h2, .bot h3 { margin: 10px 0 5px 0; font-size: 18px; color: #145288; }
         .bot p { margin: 5px 0; }
@@ -28,29 +39,50 @@
         #sendBtn { padding: 0 25px; border-radius: 50px; font-size: 16px; background: linear-gradient(90deg, #00d2ff, #00a8cc); box-shadow: 0 4px 15px rgba(0, 210, 255, 0.4); }
         #sendBtn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 210, 255, 0.6); }
         
-        /* Bouton Stop : Pour couper la voix */
-        #stopBtn { width: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); }
-        #stopBtn:hover { transform: scale(1.05); }
-        #stopBtn svg { width: 20px; height: 20px; fill: white; }
+        /* Bouton Vocal Unifié (Micro / Stop) */
+        #voiceBtn {
+            width: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #00c6ff, #0072ff); /* Dégradé Bleu Cyan Futuriste */
+            box-shadow: 0 4px 15px rgba(0, 198, 255, 0.4);
+            position: relative;
+        }
+        #voiceBtn:hover { transform: scale(1.05); }
         
-        /* Bouton Micro */
-        #micBtn { width: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #ec4899, #8b5cf6); box-shadow: 0 4px 15px rgba(236, 72, 153, 0.4); }
-        #micBtn:hover { transform: scale(1.05); }
-        #micBtn svg { width: 20px; height: 20px; fill: white; }
+        /* État "Speaking" (Agent en train de parler) */
+        #voiceBtn.speaking {
+            background: linear-gradient(135deg, #f83600, #fe8c00); /* Dégradé Orange/Rouge "Stop" */
+            box-shadow: 0 4px 20px rgba(248, 54, 0, 0.6);
+            animation: pulse 1.5s infinite;
+        }
+        
+        /* Gestion des icônes */
+        #voiceBtn svg { width: 20px; height: 20px; fill: white; pointer-events: none; }
+        #stopIcon { display: none; }
+        #voiceBtn.speaking #microIcon { display: none; }
+        #voiceBtn.speaking #stopIcon { display: block; }
+
+        /* Animation futuriste de pulsation */
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(248, 54, 0, 0.7); }
+            70% { box-shadow: 0 0 0 12px rgba(248, 54, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(248, 54, 0, 0); }
+        }
     </style>
 </head>
 <body>
     <h1>Agent IA</h1>
     <div id="chat"></div>
     
-    <div class="input-group">
+        <div class="input-group">
         <input type="text" id="userInput" placeholder="Écrivez ou parlez...">
         <button id="sendBtn" onclick="sendMessage()">Envoyer</button>
-        <button id="stopBtn" onclick="stopSpeaking()" title="Arrêter la voix">
-            <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
-        </button>
-        <button id="micBtn" onclick="startListening()" title="Parler">
-            <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+        <button id="voiceBtn" onclick="handleVoiceButton()" title="Parler / Arrêter">
+            <svg id="microIcon" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+            <svg id="stopIcon" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
         </button>
     </div>
 
@@ -123,7 +155,7 @@
             } catch (error) { console.log("Erreur sauvegarde:", error); }
         }
 
-        // 3. Envoyer un message
+        // 3. Envoyer un message (ajout de la classe "speaking" au bouton)
         async function sendMessage() {
             const userText = input.value;
             if (!userText) return;
@@ -144,13 +176,13 @@
                 const data = await response.json();
                 const botText = data.reply;
                 
-                // Affichage stylé avec conversion Markdown
                 chatDiv.innerHTML += `<div class="bot">${formatText(botText)}</div>`;
-                
                 history.push({ role: "assistant", content: botText });
                 saveMessage("assistant", botText);
                 
-                // Lecture vocale nettoyée
+                // Activation du bouton STOP visuellement
+                document.getElementById('voiceBtn').classList.add('speaking');
+                
                 speakText(cleanTextForSpeech(botText));
                 
                 chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -159,10 +191,10 @@
             }
         }
 
-        // Fonction pour parler (avec nettoyage)
+        // Fonction pour parler
         function speakText(text) {
             if (!text) return;
-            window.speechSynthesis.cancel(); // On coupe ce qui est en cours avant de parler
+            window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'fr-FR';
             utterance.rate = 1.0;
@@ -170,17 +202,34 @@
             const voices = window.speechSynthesis.getVoices();
             const frenchVoice = voices.find(voice => voice.lang.startsWith('fr'));
             if (frenchVoice) utterance.voice = frenchVoice;
+            
+            // Remettre le bouton en mode Micro à la fin de la lecture
+            utterance.onend = () => {
+                document.getElementById('voiceBtn').classList.remove('speaking');
+            };
+            
             window.speechSynthesis.speak(utterance);
         }
 
-        // Nouvelle fonction pour ARRÊTER la voix
+        // Fonction pour gérer le bouton combiné (Micro / Stop)
+        function handleVoiceButton() {
+            const btn = document.getElementById('voiceBtn');
+            if (btn.classList.contains('speaking')) {
+                stopSpeaking(); // Si l'agent parle, on arrête
+            } else {
+                startListening(); // Sinon, on lance le micro
+            }
+        }
+
+        // Fonction pour ARRÊTER la voix
         function stopSpeaking() {
             window.speechSynthesis.cancel();
+            document.getElementById('voiceBtn').classList.remove('speaking');
         }
 
         // 4. Fonction Microphone
         function startListening() {
-            stopSpeaking(); // On arrête la voix avant d'écouter
+            stopSpeaking(); // On arrête tout avant d'écouter
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
             recognition.lang = 'fr-FR';
             recognition.start();
@@ -195,7 +244,6 @@
                 alert("Micro non autorisé ou erreur : " + event.error);
             };
         }
-
         window.onload = loadHistory;
         input.addEventListener("keypress", function(event) { if (event.key === "Enter") sendMessage(); });
     </script>
