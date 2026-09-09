@@ -47,8 +47,7 @@ export default async function handler(req, res) {
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        // 3. Détection stricte de la langue : l'IA doit répondre dans la langue du message
-        // On utilise l'historique pour trouver le dernier message de l'utilisateur
+        // 3. Détection stricte de la langue de l'utilisateur (dernier message de l'utilisateur)
         const lastUserMessage = history.filter(m => m.role === "user").pop();
         
         let detectedLang = "fr";
