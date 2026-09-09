@@ -5,6 +5,6 @@
     }
   },
   "rewrites": [
-    { "source": "/api/transcribe", "destination": "/api/transcribe" }
+    { "source": "/api/transcribe", "destination": "/api/transcribe.js" }
   ]
 }
