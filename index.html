@@ -398,52 +398,34 @@
             }
         }
 
-        // Fonction de lecture vocale UNIFIÉE et CORRECTE
-        async function playVoice(text) {
+        // Fonction de lecture vocale (FR rapide, EN clair, AR Classique)
+        function speakText(text) {
             if (!text) return;
-
-            // 1. Détection de l'Arabe (Darija ou Classique) via les caractères arabes
-            const isArabic = /[\u0600-\u06FF]/.test(text);
-
-            if (isArabic) {
-                // On arrête la voix précédente
-                window.speechSynthesis.cancel();
-                document.getElementById('voiceBtn').classList.add('speaking');
-                
-                // On utilise le serveur TTS (Google Translate) pour une vraie voix arabe
-                const audioUrl = `/api/tts?text=${encodeURIComponent(text)}`;
-                const audio = new Audio(audioUrl);
-                audio.onended = () => document.getElementById('voiceBtn').classList.remove('speaking');
-                audio.onerror = () => {
-                    // Si l'API échoue, on utilise la voix native du navigateur (si elle existe)
-                    const u = new SpeechSynthesisUtterance(text);
-                    u.lang = 'ar-SA';
-                    u.rate = 0.9;
-                    u.onend = () => document.getElementById('voiceBtn').classList.remove('speaking');
-                    window.speechSynthesis.speak(u);
-                };
-                await audio.play();
-                return;
-            }
-
-            // 2. Détection de l'Anglais (pas d'accents français)
-            const isEnglish = /[a-zA-Z]/.test(text) && !/[éèêëàâäîïôöùûüç]/.test(text);
-
-            // 3. Lecture via les voix natives du navigateur pour FR et EN
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
             
-            if (isEnglish) {
-                // Voix Anglaise (Indienne si disponible, sinon standard)
-                utterance.lang = 'en-IN';
-                utterance.rate = 0.9; // Plus lent et clair pour l'anglais
+            // 1. Détection de l'Arabe Classique (caractères arabes)
+            const isArabic = /[\u0600-\u06FF]/.test(text);
+            
+            if (isArabic) {
+                utterance.lang = 'ar-SA'; // Voix Arabe Classique
+                utterance.rate = 1.0;
+                const voices = window.speechSynthesis.getVoices();
+                const arVoice = voices.find(v => v.lang.startsWith('ar'));
+                if (arVoice) utterance.voice = arVoice;
+            } 
+            // 2. Détection de l'Anglais (pas d'accents français)
+            else if (/[a-zA-Z]/.test(text) && !/[éèêëàâäîïôöùûüç]/.test(text)) {
+                utterance.lang = 'en-IN'; // Voix Anglaise Indienne si dispo
+                utterance.rate = 0.95; // Un peu plus lente pour la clarté
                 const voices = window.speechSynthesis.getVoices();
                 const enVoice = voices.find(v => v.lang === 'en-IN') || voices.find(v => v.lang.startsWith('en'));
                 if (enVoice) utterance.voice = enVoice;
-            } else {
-                // Voix Française (Vitesse plus rapide)
+            } 
+            // 3. Français
+            else {
                 utterance.lang = 'fr-FR';
-                utterance.rate = 1.15; // Vitesse rapide pour le FR
+                utterance.rate = 1.2; // Plus rapide en français
                 const voices = window.speechSynthesis.getVoices();
                 const frVoice = voices.find(v => v.lang.startsWith('fr'));
                 if (frVoice) utterance.voice = frVoice;
@@ -469,21 +451,33 @@
             document.getElementById('voiceBtn').classList.remove('speaking');
         }
 
-        // 4. Fonction Microphone
+        // Fonction Microphone (Phrases longues activées)
         function startListening() {
             stopSpeaking();
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.lang = 'fr-FR';
+            recognition.lang = 'fr-FR'; // Ou 'en-US' selon la langue
+            recognition.continuous = true;  // Ne coupe pas après une pause
+            recognition.interimResults = true; // Affiche les mots au fur et à mesure
             recognition.start();
 
             recognition.onresult = function(event) {
-                const transcript = event.results[0][0].transcript;
-                input.value = transcript;
-                sendMessage();
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    }
+                }
+                if (finalTranscript) {
+                    input.value = finalTranscript;
+                    sendMessage();
+                }
             };
 
             recognition.onerror = function(event) {
                 alert("Micro non autorisé ou erreur : " + event.error);
+            };
+            recognition.onend = function() {
+                document.getElementById('voiceBtn').classList.remove('speaking');
             };
         }
         window.onload = loadHistory;
