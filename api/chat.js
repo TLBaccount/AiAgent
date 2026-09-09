@@ -4,21 +4,19 @@ export default async function handler(req, res) {
     }
 
     const { message, history } = req.body;
-    const motDePasse = "code alpha"; // Le secret est maintenant caché ici !
-    const apiKey = process.env.GROQ_API_KEY; // La clé Groq est lue depuis Vercel
 
-    // Vérification des actions secrètes (Heure)
-    if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("l'heure")) {
-        if (message.toLowerCase().includes(motDePasse)) {
-            const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-            return res.status(200).json({ reply: `Il est actuellement ${heure}.` });
-        } else {
-            return res.status(200).json({ reply: "Désolé, je ne peux pas effectuer cette action. Vérifiez vos autorisations." });
-        }
+    // Vérification simple de l'heure
+    if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time")) {
+        const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return res.status(200).json({ reply: `Il est actuellement ${heure}.` });
     }
 
-    // Appel à Groq
     try {
+        const apiKey = process.env.GROQ_API_KEY;
+        if (!apiKey) {
+            return res.status(500).json({ error: "Clé API Groq manquante sur le serveur" });
+        }
+
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -28,15 +26,25 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 model: "openai/gpt-oss-20b",
                 messages: [
-                    { role: "system", content: "Tu es un assistant personnel multilingue. RÈGLES STRICTES DE LANGUES : 1) Si l'utilisateur écrit en DARIJA ALGÉRIEN, réponds TOUJOURS en Darija algérien, et utilise TOUJOURS l'ALPHABET ARABE (ex: 'سلام، كيفاش راك؟'). INTERDICTION FORMELLE d'écrire le Darija en alphabet latin. 2) Si l'utilisateur écrit en ARABE CLASSIQUE, réponds en arabe classique (alphabet arabe). 3) Si l'utilisateur écrit en ANGLAIS (y compris anglais indien), réponds UNIQUEMENT en anglais. 4) Si l'utilisateur écrit en FRANÇAIS, réponds en français. 5) Ne traduis jamais la langue de l'utilisateur vers une autre langue. Réponds dans la langue exacte du message entrant." },
+                    {
+                        role: "system",
+                        content: "Tu es un assistant personnel multilingue. RÈGLES STRICTES DE LANGUES : 1) Si l'utilisateur écrit en ANGLAIS (y compris anglais indien), réponds UNIQUEMENT en anglais. 2) Si l'utilisateur écrit en FRANÇAIS, réponds en français. 3) Si l'utilisateur écrit en ARABE CLASSIQUE (Fusha), réponds en arabe classique. 4) INTERDICTION ABSOLUE de répondre en Darija algérien ou dans tout autre dialecte arabe, même si l'utilisateur en parle. 5) Utilise des phrases courtes et aérées. N'utilise pas de tableaux sauf demande explicite."
+                    },
                     ...history
                 ]
             })
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Erreur API Groq: ${response.status} - ${errorText}`);
+        }
+
         const data = await response.json();
         return res.status(200).json({ reply: data.choices[0].message.content });
+
     } catch (error) {
-        return res.status(500).json({ error: "Erreur serveur" });
+        console.error("Erreur serveur:", error);
+        return res.status(500).json({ error: "Erreur interne du serveur. Vérifiez la clé API Groq ou le modèle." });
     }
 }
