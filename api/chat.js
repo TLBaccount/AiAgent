@@ -52,9 +52,16 @@ export default async function handler(req, res) {
         
         let detectedLang = "fr";
         if (lastUserMessage) {
+            // Si le message contient des caractères arabes, c'est de l'arabe
             if (/[\u0600-\u06FF]/.test(lastUserMessage.content)) {
                 detectedLang = "ar";
-            } else if (/[a-zA-Z]/.test(lastUserMessage.content) && !/[éèêëàâäîïôöùûüç]/.test(lastUserMessage.content)) {
+            } 
+            // Si le message contient des mots français courants sans accents, on force le français
+            else if (/merci|bonjour|salut|oui|non|svp|stp|quelle|comment|pourquoi|est|il|elle|nous|vous|je|tu|le|la|les|un|une|des/i.test(lastUserMessage.content)) {
+                detectedLang = "fr";
+            }
+            // Sinon, si tous les caractères sont en alphabet latin sans accents français, c'est de l'anglais
+            else if (/[a-zA-Z]/.test(lastUserMessage.content) && !/[éèêëàâäîïôöùûüç]/.test(lastUserMessage.content)) {
                 detectedLang = "en";
             }
         }
