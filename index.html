@@ -370,33 +370,69 @@
             });
         }
 
-        // 7. Fonction Microphone (adaptative selon le dernier message)
-        function startListening() {
+        // 7. Fonction Microphone PERFECTIONNÉE (envoie l'audio au serveur Whisper)
+        async function startListening() {
             stopSpeaking();
             
-            let lang = 'fr-FR';
-            if (history.length > 0) {
-                const lastText = history[history.length - 1].content;
-                if (/[\u0600-\u06FF]/.test(lastText)) {
-                    lang = 'ar-SA';
-                } else if (/[a-zA-Z]/.test(lastText) && !/[éèêëàâäîïôöùûüç]/.test(lastText)) {
-                    lang = 'en-IN';
+            // 1. On demande l'accès au micro
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            const audioChunks = [];
+
+            // 2. On enregistre
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            // 3. Quand l'enregistrement est fini, on envoie le fichier audio au serveur
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const formData = new FormData();
+                formData.append('file', audioBlob);
+
+                try {
+                    const response = await fetch("/api/transcribe", {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    if (!response.ok) throw new Error("Erreur transcription");
+                    const data = await response.json();
+                    
+                    // 4. Le serveur renvoie le texte ET la langue exacte
+                    input.value = data.text;
+                    history.push({ role: "user", content: data.text });
+                    saveMessage("user", data.text);
+                    
+                    // 5. On envoie au serveur "chat" avec la langue détectée
+                    const chatResponse = await fetch("/api/chat", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message: data.text, history: history, detectedLang: data.lang })
+                    });
+                    
+                    const chatData = await chatResponse.json();
+                    const botText = chatData.reply;
+                    const botLang = chatData.lang;
+                    
+                    chatDiv.innerHTML += `<div class="user">${data.text}</div>`;
+                    chatDiv.innerHTML += `<div class="bot">${formatText(botText)}</div>`;
+                    history.push({ role: "assistant", content: botText });
+                    saveMessage("assistant", botText);
+                    
+                    document.getElementById('voiceBtn').classList.add('speaking');
+                    speakText(botText, botLang);
+                    
+                    chatDiv.scrollTop = chatDiv.scrollHeight;
+
+                } catch (error) {
+                    alert("Erreur : " + error.message);
                 }
-            }
-
-            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.lang = lang;
-            recognition.start();
-
-            recognition.onresult = function(event) {
-                const transcript = event.results[0][0].transcript;
-                input.value = transcript;
-                sendMessage();
             };
 
-            recognition.onerror = function(event) {
-                alert("Micro non autorisé ou erreur : " + event.error);
-            };
+            mediaRecorder.start();
+            // On arrête l'enregistrement après 5 secondes (ou quand l'utilisateur reclique)
+            setTimeout(() => mediaRecorder.stop(), 5000);
         }
 
         // 8. Fonction pour gérer le bouton combiné
