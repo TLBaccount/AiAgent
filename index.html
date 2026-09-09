@@ -4,15 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ESSE</title>
-    <!-- Import des polices Google Fonts (léger et moderne) -->
     <link href="https://fonts.googleapis.com/css2?family=Kaushan+Script&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Poppins', sans-serif;
             background-image: linear-gradient(to left bottom, #1e3c72, #1a477d, #145288, #0c5d93, #00689d);
             color: #fff;
-            /* On enlève le max-width: 600px pour que ça s'adapte à l'écran */
             max-width: 100%;
             margin: 0 auto;
             padding: 15px;
@@ -32,7 +30,6 @@
             letter-spacing: 1px;
         }
         
-        /* Scrollbar moderne et fine */
         #chat::-webkit-scrollbar {
             width: 6px;
         }
@@ -91,7 +88,7 @@
         .bot li { margin: 3px 0; }
         .bot strong { color: #145288; }
         
-        /* Tableaux stylisés et professionnels */
+        /* Tableaux professionnels */
         .table-wrapper {
             overflow-x: auto;
             margin: 10px 0;
@@ -124,7 +121,7 @@
             background: #e2e8f0;
         }
         
-        /* Zone de saisie : adaptation mobile */
+        /* Zone de saisie adaptative */
         .input-group {
             display: flex;
             gap: 10px;
@@ -135,11 +132,9 @@
             backdrop-filter: blur(12px);
             align-items: center;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            /* On force la largeur à 100% de l'écran mobile */
             width: 100%;
             max-width: 100%;
         }
-        
         input {
             flex: 1;
             padding: 12px 15px;
@@ -148,10 +143,11 @@
             outline: none;
             color: #fff;
             font-size: 15px;
+            min-width: 0;
         }
         input::placeholder { color: rgba(255, 255, 255, 0.6); }
         
-        /* Bouton Envoyer : adaptation mobile */
+        /* Bouton Envoyer */
         #sendBtn {
             padding: 10px 20px;
             border-radius: 50px;
@@ -164,7 +160,7 @@
             text-transform: uppercase;
         }
         
-        /* Bouton Vocal : adaptation mobile */
+        /* Bouton Vocal (Micro / Stop) */
         #voiceBtn {
             width: 40px;
             height: 40px;
@@ -177,72 +173,35 @@
             position: relative;
             transition: all 0.3s ease;
         }
-        
-        /* Bouton STOP : Dégradé Rouge vif vers Orange (Style Instagram) */
+        /* Bouton STOP : Rouge vif vers Orange (Instagram) */
         #voiceBtn.speaking {
             background: linear-gradient(135deg, #ff0000, #ff9900);
             box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
             animation: pulse 1.5s infinite;
         }
-        
-        /* Carré intérieur du bouton STOP (blanc cassé) */
         #voiceBtn.speaking #stopIcon {
             fill: #fffff6;
         }
-        
-        /* Gestion des icônes */
         #voiceBtn svg { width: 18px; height: 18px; fill: white; pointer-events: none; }
         #stopIcon { display: none; }
         #voiceBtn.speaking #microIcon { display: none; }
         #voiceBtn.speaking #stopIcon { display: block; }
-
-        /* Animation futuriste de pulsation */
+        
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
             70% { box-shadow: 0 0 0 12px rgba(255, 0, 0, 0); }
             100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); }
         }
         
-        /* --- MEDIA QUERY MOBILE : S'applique uniquement si l'écran est petit --- */
         @media (max-width: 600px) {
-            body {
-                padding: 10px;
-            }
-            h1 {
-                font-size: 26px;
-                margin-bottom: 10px;
-            }
-            #chat {
-                height: 55vh;
-                padding: 15px;
-                margin-bottom: 10px;
-            }
-            /* On force les boutons et le champ à rester sur la même ligne mais sans se toucher */
-            .input-group {
-                padding: 6px;
-                gap: 6px;
-            }
-            /* Champ texte plus compacte et sans débordement */
-            input {
-                padding: 10px 12px;
-                min-width: 0; /* CRUCIAL : empêche l'input de dépasser */
-                font-size: 14px;
-            }
-            /* Bouton Envoyer plus compacte */
-            #sendBtn {
-                padding: 8px 12px;
-                font-size: 12px;
-            }
-            /* Bouton Vocal plus compacte */
-            #voiceBtn {
-                width: 35px;
-                height: 35px;
-                padding: 0;
-            }
-            #voiceBtn svg {
-                width: 16px;
-                height: 16px;
-            }
+            body { padding: 10px; }
+            h1 { font-size: 26px; margin-bottom: 10px; }
+            #chat { height: 55vh; padding: 15px; margin-bottom: 10px; }
+            .input-group { padding: 6px; gap: 6px; }
+            input { padding: 10px 12px; font-size: 14px; }
+            #sendBtn { padding: 8px 12px; font-size: 12px; }
+            #voiceBtn { width: 35px; height: 35px; padding: 0; }
+            #voiceBtn svg { width: 16px; height: 16px; }
         }
     </style>
 </head>
@@ -267,72 +226,7 @@
         const chatDiv = document.getElementById('chat');
         const input = document.getElementById('userInput');
         let history = [];
-
-        // Précharger les voix du navigateur (essentiel pour l'arabe)
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.onvoiceschanged = () => {
-                window.speechSynthesis.getVoices();
-            };
-        }
-        // Fonction pour convertir le Markdown en HTML joli (avec vrais tableaux)
-        function formatText(text) {
-            // Échapper les caractères HTML
-            let safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-            // 1. Convertir les tableaux Markdown en vrais tableaux HTML
-            safeText = safeText.replace(/(^\|.+\|\s*\n\|[\s:|-]+\|\s*\n(?:\|.+\|\s*\n?)*)/gm, function(tableBlock) {
-                const lines = tableBlock.trim().split('\n');
-                if (lines.length < 2) return tableBlock;
-
-                // En-tête
-                const headerCells = lines[0].split('|').map(cell => cell.trim()).filter(cell => cell !== '');
-                // Données
-                const dataRows = lines.slice(2).map(line => {
-                    return line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
-                });
-
-                let html = '<div class="table-wrapper"><table><thead><tr>';
-                headerCells.forEach(cell => html += `<th>${cell}</th>`);
-                html += '</tr></thead><tbody>';
-                dataRows.forEach(row => {
-                    html += '<tr>';
-                    row.forEach(cell => html += `<td>${cell}</td>`);
-                    html += '</tr>';
-                });
-                html += '</tbody></table></div>';
-                return html;
-            });
-
-            // 2. Titres
-            safeText = safeText.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-            safeText = safeText.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-            safeText = safeText.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-
-            // 3. Gras et Italique
-            safeText = safeText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            safeText = safeText.replace(/(^|\W)\*(?!\*)(\w[^*]*)\*(?=\W|$)/g, '$1<em>$2</em>');
-
-            // 4. Listes à puces simples
-            safeText = safeText.replace(/^\s*[-*] (.*$)/gim, '<li>$1</li>');
-            safeText = safeText.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
-
-            // 5. Sauts de ligne
-            safeText = safeText.replace(/\n/g, '<br>');
-            
-            return safeText;
-        }
-
-        // Fonction pour nettoyer le texte avant de le lire à voix haute
-        function cleanTextForSpeech(text) {
-            return text
-                .replace(/\*\*/g, ', ')
-                .replace(/\*/g, ', ')
-                .replace(/_/g, ', ')
-                .replace(/#/g, '')
-                .replace(/-/g, ', ')
-                .replace(/\n/g, '. ')
-                .replace(/\s+/g, ' ');
-        }
+        let currentAudio = null; // Pour gérer le son en cours
 
         // 1. Charger l'historique
         async function loadHistory() {
@@ -390,7 +284,9 @@
                 saveMessage("assistant", botText);
                 
                 document.getElementById('voiceBtn').classList.add('speaking');
-                playVoice(botText); // On lit le texte original, pas le texte nettoyé
+                
+                // Appel à la fonction TTS (génération audio)
+                speakText(botText);
                 
                 chatDiv.scrollTop = chatDiv.scrollHeight;
             } catch (error) {
@@ -398,44 +294,118 @@
             }
         }
 
-        // Fonction de lecture vocale (FR rapide, EN clair, AR Classique)
-        function speakText(text) {
-            if (!text) return;
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            
-            // 1. Détection de l'Arabe Classique (caractères arabes)
-            const isArabic = /[\u0600-\u06FF]/.test(text);
-            
-            if (isArabic) {
-                utterance.lang = 'ar-SA'; // Voix Arabe Classique
-                utterance.rate = 1.0;
-                const voices = window.speechSynthesis.getVoices();
-                const arVoice = voices.find(v => v.lang.startsWith('ar'));
-                if (arVoice) utterance.voice = arVoice;
-            } 
-            // 2. Détection de l'Anglais (pas d'accents français)
-            else if (/[a-zA-Z]/.test(text) && !/[éèêëàâäîïôöùûüç]/.test(text)) {
-                utterance.lang = 'en-IN'; // Voix Anglaise Indienne si dispo
-                utterance.rate = 0.95; // Un peu plus lente pour la clarté
-                const voices = window.speechSynthesis.getVoices();
-                const enVoice = voices.find(v => v.lang === 'en-IN') || voices.find(v => v.lang.startsWith('en'));
-                if (enVoice) utterance.voice = enVoice;
-            } 
-            // 3. Français
-            else {
-                utterance.lang = 'fr-FR';
-                utterance.rate = 1.2; // Plus rapide en français
-                const voices = window.speechSynthesis.getVoices();
-                const frVoice = voices.find(v => v.lang.startsWith('fr'));
-                if (frVoice) utterance.voice = frVoice;
-            }
+        // 4. Fonction pour convertir le Markdown en HTML joli
+        function formatText(text) {
+            let safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-            utterance.onend = () => document.getElementById('voiceBtn').classList.remove('speaking');
-            window.speechSynthesis.speak(utterance);
+            safeText = safeText.replace(/(^\|.+\|\s*\n\|[\s:|-]+\|\s*\n(?:\|.+\|\s*\n?)*)/gm, function(tableBlock) {
+                const lines = tableBlock.trim().split('\n');
+                if (lines.length < 2) return tableBlock;
+                const headerCells = lines[0].split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+                const dataRows = lines.slice(2).map(line => {
+                    return line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+                });
+                let html = '<div class="table-wrapper"><table><thead><tr>';
+                headerCells.forEach(cell => html += `<th>${cell}</th>`);
+                html += '</tr></thead><tbody>';
+                dataRows.forEach(row => {
+                    html += '<tr>';
+                    row.forEach(cell => html += `<td>${cell}</td>`);
+                    html += '</tr>';
+                });
+                html += '</tbody></table></div>';
+                return html;
+            });
+
+            safeText = safeText.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+            safeText = safeText.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+            safeText = safeText.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+            safeText = safeText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            safeText = safeText.replace(/(^|\W)\*(?!\*)(\w[^*]*)\*(?=\W|$)/g, '$1<em>$2</em>');
+            safeText = safeText.replace(/^\s*[-*] (.*$)/gim, '<li>$1</li>');
+            safeText = safeText.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
+            safeText = safeText.replace(/\n/g, '<br>');
+            return safeText;
         }
 
-        // Fonction pour gérer le bouton combiné
+        // 5. Fonction pour nettoyer le texte avant la lecture
+        function cleanTextForSpeech(text) {
+            return text
+                .replace(/\*\*/g, ', ')
+                .replace(/\*/g, ', ')
+                .replace(/_/g, ', ')
+                .replace(/#/g, '')
+                .replace(/-/g, ', ')
+                .replace(/\n/g, '. ')
+                .replace(/\s+/g, ' ');
+        }
+
+        // 6. Fonction pour parler VIA LE SERVEUR TTS
+        function speakText(text) {
+            // On coupe tout ce qui est en cours
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+            
+            // Nettoyage du texte pour la lecture
+            const cleanText = cleanTextForSpeech(text);
+            
+            // Détection de la langue pour le TTS
+            let lang = 'fr'; // Par défaut
+            if (/[\u0600-\u06FF]/.test(cleanText)) {
+                lang = 'ar';
+            } else if (/[a-zA-Z]/.test(cleanText) && !/[éèêëàâäîïôöùûüç]/.test(cleanText)) {
+                lang = 'en';
+            }
+            
+            // Appel au serveur TTS pour générer l'audio
+            const audioUrl = `/api/tts?text=${encodeURIComponent(cleanText)}&lang=${lang}`;
+            
+            const audio = new Audio(audioUrl);
+            currentAudio = audio;
+            
+            audio.onended = () => {
+                currentAudio = null;
+                document.getElementById('voiceBtn').classList.remove('speaking');
+            };
+            
+            audio.play().catch(error => {
+                console.log("Erreur lecture audio:", error);
+                document.getElementById('voiceBtn').classList.remove('speaking');
+            });
+        }
+
+        // 7. Fonction Microphone (adaptative selon le dernier message)
+        function startListening() {
+            stopSpeaking();
+            
+            let lang = 'fr-FR';
+            if (history.length > 0) {
+                const lastText = history[history.length - 1].content;
+                if (/[\u0600-\u06FF]/.test(lastText)) {
+                    lang = 'ar-SA';
+                } else if (/[a-zA-Z]/.test(lastText) && !/[éèêëàâäîïôöùûüç]/.test(lastText)) {
+                    lang = 'en-IN';
+                }
+            }
+
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = lang;
+            recognition.start();
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                input.value = transcript;
+                sendMessage();
+            };
+
+            recognition.onerror = function(event) {
+                alert("Micro non autorisé ou erreur : " + event.error);
+            };
+        }
+
+        // 8. Fonction pour gérer le bouton combiné
         function handleVoiceButton() {
             const btn = document.getElementById('voiceBtn');
             if (btn.classList.contains('speaking')) {
@@ -445,41 +415,15 @@
             }
         }
 
-        // Fonction pour ARRÊTER la voix
+        // 9. Fonction pour ARRÊTER la voix
         function stopSpeaking() {
-            window.speechSynthesis.cancel();
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
             document.getElementById('voiceBtn').classList.remove('speaking');
         }
 
-        // Fonction Microphone (Phrases longues activées)
-        function startListening() {
-            stopSpeaking();
-            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.lang = 'fr-FR'; // Ou 'en-US' selon la langue
-            recognition.continuous = true;  // Ne coupe pas après une pause
-            recognition.interimResults = true; // Affiche les mots au fur et à mesure
-            recognition.start();
-
-            recognition.onresult = function(event) {
-                let finalTranscript = '';
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
-                    }
-                }
-                if (finalTranscript) {
-                    input.value = finalTranscript;
-                    sendMessage();
-                }
-            };
-
-            recognition.onerror = function(event) {
-                alert("Micro non autorisé ou erreur : " + event.error);
-            };
-            recognition.onend = function() {
-                document.getElementById('voiceBtn').classList.remove('speaking');
-            };
-        }
         window.onload = loadHistory;
         input.addEventListener("keypress", function(event) { if (event.key === "Enter") sendMessage(); });
     </script>
