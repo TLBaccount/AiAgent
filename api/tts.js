@@ -5,8 +5,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Texte manquant' });
     }
 
-    // Ne pas envoyer trop de texte d'un coup (sinon Google bloque)
-    const cleanText = text.substring(0, 200).replace(/[^\w\s\u0600-\u06FF.,!?]/g, '');
+    // Nettoyage du texte (enlever les espaces multiples et les caractères inutiles)
+    const cleanText = text.substring(0, 200).replace(/\s+/g, ' ').trim();
 
     // Choix de la langue
     let targetLang = 'fr'; 
