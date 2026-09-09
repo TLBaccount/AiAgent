@@ -1,11 +1,19 @@
 export default async function handler(req, res) {
-    const { text } = req.query;
+    const { text, lang } = req.query;
+    
     if (!text) {
         return res.status(400).json({ error: 'Texte manquant' });
     }
 
-    // Utilisation de l'API de traduction de Google pour générer l'audio (voix arabe)
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=ar&client=tw-ob`;
+    // Choix de la langue (Français, Anglais, Arabe Classique)
+    // Si 'lang' n'est pas fourni, on utilise 'fr' par défaut
+    let targetLang = 'fr'; 
+    if (lang === 'ar') targetLang = 'ar';
+    if (lang === 'en') targetLang = 'en';
+
+    // Utilisation de l'API de traduction Google pour générer un audio de qualité
+    // (Fonctionne pour FR, EN, AR)
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${targetLang}&client=tw-ob`;
     
     try {
         const response = await fetch(url);
