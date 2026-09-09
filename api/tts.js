@@ -1,30 +1,52 @@
 export default async function handler(req, res) {
     const { text, lang } = req.query;
-    
+
     if (!text) {
         return res.status(400).json({ error: 'Texte manquant' });
     }
 
-    // Nettoyage du texte (enlever les espaces multiples et les caractères inutiles)
-    const cleanText = text.substring(0, 200).replace(/\s+/g, ' ').trim();
+    // Nettoyage du texte
+    const cleanText = text.substring(0, 500).replace(/\s+/g, ' ').trim();
 
-    // Choix de la langue
-    let targetLang = 'fr'; 
-    if (lang === 'ar') targetLang = 'ar';
-    if (lang === 'en') targetLang = 'en';
+    // Choix de la voix (ID de modèle Fish Audio)
+    // Références : 
+    // Français : f3f1d5e0-6a2b-4b1d-9b2c-1f3a5d7e9b01
+    // Anglais : 7f2b3a5c-8e1d-4f6a-9c3b-2e5d7a9c1f03
+    // Arabe : 6a4e3b2d-8c1f-4a5e-9d7b-3f2a1c4e5d67
+    let voiceId = "f3f1d5e0-6a2b-4b1d-9b2c-1f3a5d7e9b01"; // Français par défaut
+    if (lang === 'en') voiceId = "7f2b3a5c-8e1d-4f6a-9c3b-2e5d7a9c1f03";
+    if (lang === 'ar') voiceId = "6a4e3b2d-8c1f-4a5e-9d7b-3f2a1c4e5d67";
 
-    // Utilisation de l'API de traduction Google pour générer un audio de qualité
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(cleanText)}&tl=${targetLang}&client=tw-ob`;
-    
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Erreur API');
-        
-        const arrayBuffer = await response.arrayBuffer();
+        // 1. Générer l'audio avec Fish Audio
+        const ttsResponse = await fetch("https://api.fish.audio/v1/tts", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.FISH_AUDIO_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "s2.1-pro-free", // Modèle gratuit de qualité professionnelle
+                text: cleanText,
+                voice: {
+                    id: voiceId
+                }
+            })
+        });
+
+        if (!ttsResponse.ok) {
+            const errorText = await ttsResponse.text();
+            throw new Error(`Erreur Fish Audio: ${ttsResponse.status} - ${errorText}`);
+        }
+
+        // 2. Renvoyer l'audio au navigateur
+        const arrayBuffer = await ttsResponse.arrayBuffer();
         res.setHeader('Content-Type', 'audio/mpeg');
         res.setHeader('Cache-Control', 'no-cache');
         res.send(Buffer.from(arrayBuffer));
+
     } catch (error) {
+        console.error("Erreur TTS:", error);
         res.status(500).json({ error: 'Erreur génération audio' });
     }
 }
