@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESSE</title>
+    <title>Scoop</title>
     <link href="https://fonts.googleapis.com/css2?family=Kaushan+Script&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
     <style>
@@ -206,7 +206,7 @@
     </style>
 </head>
 <body>
-    <h1>ESSE</h1>
+    <h1>Scoop</h1>
     <div id="chat"></div>
     
     <div class="input-group">
@@ -226,7 +226,7 @@
         const chatDiv = document.getElementById('chat');
         const input = document.getElementById('userInput');
         let history = [];
-        let currentAudio = null; // Pour gérer le son en cours
+        let currentAudio = null;
 
         // 1. Charger l'historique
         async function loadHistory() {
@@ -284,8 +284,6 @@
                 saveMessage("assistant", botText);
                 
                 document.getElementById('voiceBtn').classList.add('speaking');
-                
-                // Appel à la fonction TTS (génération audio)
                 speakText(botText);
                 
                 chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -342,24 +340,20 @@
 
         // 6. Fonction pour parler VIA LE SERVEUR TTS
         function speakText(text) {
-            // On coupe tout ce qui est en cours
             if (currentAudio) {
                 currentAudio.pause();
                 currentAudio = null;
             }
             
-            // Nettoyage du texte pour la lecture
             const cleanText = cleanTextForSpeech(text);
             
-            // Détection de la langue pour le TTS
-            let lang = 'fr'; // Par défaut
+            let lang = 'fr';
             if (/[\u0600-\u06FF]/.test(cleanText)) {
                 lang = 'ar';
             } else if (/[a-zA-Z]/.test(cleanText) && !/[éèêëàâäîïôöùûüç]/.test(cleanText)) {
                 lang = 'en';
             }
             
-            // Appel au serveur TTS pour générer l'audio
             const audioUrl = `/api/tts?text=${encodeURIComponent(cleanText)}&lang=${lang}`;
             
             const audio = new Audio(audioUrl);
