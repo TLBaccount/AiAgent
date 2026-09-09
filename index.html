@@ -361,6 +361,15 @@
             const audio = new Audio(audioUrl);
             currentAudio = audio;
             
+            // Accélérer légèrement la lecture en arabe et en français
+            if (lang === 'ar') {
+                audio.playbackRate = 1.2; // Accélère l'arabe de 20%
+            } else if (lang === 'fr') {
+                audio.playbackRate = 1.1; // Accélère le français de 10%
+            } else {
+                audio.playbackRate = 1.0; // Anglais normal
+            }
+            
             audio.onended = () => {
                 currentAudio = null;
                 document.getElementById('voiceBtn').classList.remove('speaking');
