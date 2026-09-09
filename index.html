@@ -393,17 +393,31 @@
             }
         }
 
-        // Fonction pour parler
+        // Fonction pour parler avec une voix adaptée à la langue
         function speakText(text) {
             if (!text) return;
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'fr-FR';
+            
+            // Détection automatique de la langue
+            if (/[\u0600-\u06FF]/.test(text)) {
+                // Si le texte contient des caractères arabes (arabe classique OU darija), on parle en arabe
+                utterance.lang = 'ar-SA'; 
+            } else if (/[a-zA-Z]/.test(text) && !/[éèêëàâäîïôöùûüç]/.test(text)) {
+                // Si le texte est principalement en anglais (pas d'accents français), on parle en anglais
+                utterance.lang = 'en-IN'; // Voix anglaise indienne (si disponible sur votre appareil)
+                utterance.rate = 0.95; // Légèrement plus lent pour l'accent indien
+            } else {
+                // Sinon, on parle en français
+                utterance.lang = 'fr-FR';
+            }
+            
             utterance.rate = 1.0;
             utterance.pitch = 1.0;
+            
             const voices = window.speechSynthesis.getVoices();
-            const frenchVoice = voices.find(voice => voice.lang.startsWith('fr'));
-            if (frenchVoice) utterance.voice = frenchVoice;
+            const targetVoice = voices.find(voice => voice.lang === utterance.lang);
+            if (targetVoice) utterance.voice = targetVoice;
             
             utterance.onend = () => {
                 document.getElementById('voiceBtn').classList.remove('speaking');
