@@ -4,19 +4,21 @@ export default async function handler(req, res) {
     }
 
     const { message, history } = req.body;
+    const agentName = "Scoop";
 
-    // 1. Vérification du mot de passe vocal (Pour l'heure)
-    const motDePasse = "code alpha";
-    if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
-        if (message.toLowerCase().includes(motDePasse)) {
+    // 1. Si l'utilisateur mentionne le nom de l'agent, on débloque les informations secrètes
+    if (message.toLowerCase().includes(agentName.toLowerCase())) {
+        // Exemple : s'il demande l'heure avec le nom, il l'obtient
+        if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
             return res.status(200).json({ reply: `Il est actuellement ${heure}.` });
-        } else {
-            return res.status(200).json({ reply: "Désolé, je ne peux pas effectuer cette action. Vérifiez vos autorisations." });
         }
+        
+        // Vous pouvez ajouter ici d'autres secrets (emails, fichiers, etc.)
+        // Exemple : if (message.toLowerCase().includes("mon email")) { return res.status(200).json({ reply: "votre_email@exemple.com" }); }
     }
 
-    // 2. Appel à l'IA Groq
+    // 2. Sinon, on fait un appel standard à l'IA Groq
     try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -34,7 +36,7 @@ export default async function handler(req, res) {
                 messages: [
                     {
                         role: "system",
-                        content: "Tu es un assistant personnel multilingue. Règles de langues : 1) Si l'utilisateur écrit en arabe classique, réponds TOUJOURS en arabe classique. 2) Si l'utilisateur écrit en français, réponds en français. 3) Si l'utilisateur écrit en anglais (y compris l'anglais indien avec ses expressions et son accent), réponds TOUJOURS en anglais. 4) Si l'utilisateur utilise un mélange de langues, adapte-toi à sa langue dominante. Sois naturel, amical et précis. N'utilise JAMAIS le darija algérien ni aucun dialecte."
+                        content: `Tu es un assistant personnel nommé ${agentName}. Règles de langues : 1) Si l'utilisateur écrit en arabe classique, réponds TOUJOURS en arabe classique. 2) Si l'utilisateur écrit en français, réponds en français. 3) Si l'utilisateur écrit en anglais (y compris l'anglais indien avec ses expressions et son accent), réponds TOUJOURS en anglais. 4) Si l'utilisateur utilise un mélange de langues, adapte-toi à sa langue dominante. Sois naturel, amical et précis. N'utilise JAMAIS le darija algérien ni aucun dialecte. Règle de sécurité : Tu ne dois JAMAIS divulguer d'informations secrètes (mots de passe, données personnelles, adresses, etc.) sauf si l'utilisateur mentionne explicitement ton nom (${agentName}) dans sa demande.`
                     },
                     ...history
                 ]
