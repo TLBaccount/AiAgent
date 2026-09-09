@@ -6,19 +6,15 @@ export default async function handler(req, res) {
     const { message, history } = req.body;
     const agentName = "Scoop";
 
-    // 1. Si l'utilisateur mentionne le nom de l'agent, on débloque les informations secrètes
+    // 1. Vérification du nom de l'agent (déblocage des secrets)
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
-        // Exemple : s'il demande l'heure avec le nom, il l'obtient
         if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-            return res.status(200).json({ reply: `Il est actuellement ${heure}.` });
+            return res.status(200).json({ reply: `Il est actuellement ${heure}.`, lang: "fr" });
         }
-        
-        // Vous pouvez ajouter ici d'autres secrets (emails, fichiers, etc.)
-        // Exemple : if (message.toLowerCase().includes("mon email")) { return res.status(200).json({ reply: "votre_email@exemple.com" }); }
     }
 
-    // 2. Sinon, on fait un appel standard à l'IA Groq
+    // 2. Appel à l'IA Groq
     try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -49,7 +45,22 @@ export default async function handler(req, res) {
         }
 
         const data = await response.json();
-        return res.status(200).json({ reply: data.choices[0].message.content });
+        let botText = data.choices[0].message.content;
+
+        // 3. Détection stricte de la langue : l'IA doit répondre dans la langue du message
+        // On utilise l'historique pour trouver le dernier message de l'utilisateur
+        const lastUserMessage = history.filter(m => m.role === "user").pop();
+        
+        let detectedLang = "fr";
+        if (lastUserMessage) {
+            if (/[\u0600-\u06FF]/.test(lastUserMessage.content)) {
+                detectedLang = "ar";
+            } else if (/[a-zA-Z]/.test(lastUserMessage.content) && !/[éèêëàâäîïôöùûüç]/.test(lastUserMessage.content)) {
+                detectedLang = "en";
+            }
+        }
+
+        return res.status(200).json({ reply: botText, lang: detectedLang });
 
     } catch (error) {
         console.error("Erreur serveur:", error);
