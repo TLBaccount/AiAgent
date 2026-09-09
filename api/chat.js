@@ -26,10 +26,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 model: "openai/gpt-oss-20b",
                 messages: [
-                    {
-                        role: "system",
-                        content: "Tu es un assistant personnel multilingue. RÈGLES STRICTES DE LANGUES : 1) Si l'utilisateur écrit en ANGLAIS (y compris anglais indien), réponds UNIQUEMENT en anglais. 2) Si l'utilisateur écrit en FRANÇAIS, réponds en français. 3) Si l'utilisateur écrit en ARABE CLASSIQUE (Fusha), réponds en arabe classique. 4) INTERDICTION ABSOLUE de répondre en Darija algérien ou dans tout autre dialecte arabe, même si l'utilisateur en parle. 5) Utilise des phrases courtes et aérées. N'utilise pas de tableaux sauf demande explicite."
-                    },
+                    {role: "system", content: "Tu es un assistant personnel multilingue. Règles de langues : 1) Si l'utilisateur écrit en arabe classique, réponds TOUJOURS en arabe classique. 2) Si l'utilisateur écrit en français, réponds en français. 3) Si l'utilisateur écrit en anglais (y compris l'anglais indien avec ses expressions et son accent), réponds TOUJOURS en anglais. 4) Si l'utilisateur utilise un mélange de langues, adapte-toi à sa langue dominante. Sois naturel, amical et précis. N'utilise JAMAIS le darija algérien ni aucun dialecte."},
                     ...history
                 ]
             })
