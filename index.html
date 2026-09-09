@@ -268,7 +268,12 @@
         const input = document.getElementById('userInput');
         let history = [];
 
-        // Fonction pour convertir le Markdown en HTML joli
+        // Précharger les voix du navigateur (essentiel pour l'arabe)
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = () => {
+                window.speechSynthesis.getVoices();
+            };
+        }
         // Fonction pour convertir le Markdown en HTML joli (avec vrais tableaux)
         function formatText(text) {
             // Échapper les caractères HTML
@@ -394,31 +399,55 @@
         }
 
         // Fonction pour parler avec une voix adaptée à la langue
+        // Fonction pour parler avec une voix adaptée à la langue
         function speakText(text) {
             if (!text) return;
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
             
-            // Détection automatique de la langue
+            // 1. Détection automatique de la langue
             if (/[\u0600-\u06FF]/.test(text)) {
-                // Si le texte contient des caractères arabes (arabe classique OU darija), on parle en arabe
-                utterance.lang = 'ar-SA'; 
+                // ARABE (Classique ou Darija) : on règle la voix
+                utterance.lang = 'ar-SA';
+                utterance.rate = 0.95; // Vitesse normale
+                utterance.pitch = 1.0;
+                
+                // On cherche une voix ARABE disponible
+                const arabicVoices = window.speechSynthesis.getVoices().filter(voice => voice.lang.startsWith('ar'));
+                if (arabicVoices.length > 0) {
+                    // On prend la première voix arabe trouvée (souvent 'ar-SA' ou 'ar-EG')
+                    utterance.voice = arabicVoices[0];
+                }
+                // Si aucune voix arabe n'est disponible, le navigateur essaiera de lire avec le réglage par défaut
+                
             } else if (/[a-zA-Z]/.test(text) && !/[éèêëàâäîïôöùûüç]/.test(text)) {
-                // Si le texte est principalement en anglais (pas d'accents français), on parle en anglais
-                utterance.lang = 'en-IN'; // Voix anglaise indienne (si disponible sur votre appareil)
-                utterance.rate = 0.95; // Légèrement plus lent pour l'accent indien
+                // ANGLAIS (y compris Indien) : on règle la voix
+                utterance.lang = 'en-IN'; 
+                utterance.rate = 0.8; // On RALENTIT la vitesse en anglais (car elle était trop rapide)
+                utterance.pitch = 1.0;
+                
+                // On cherche une voix anglaise indienne ou une voix anglaise standard
+                const englishVoices = window.speechSynthesis.getVoices().filter(voice => voice.lang.startsWith('en'));
+                if (englishVoices.length > 0) {
+                    // On préfère la voix 'en-IN' si elle existe, sinon on prend la première voix anglaise
+                    const indianVoice = englishVoices.find(voice => voice.lang === 'en-IN');
+                    utterance.voice = indianVoice || englishVoices[0];
+                }
+                
             } else {
-                // Sinon, on parle en français
+                // FRANÇAIS : on accélère légèrement
                 utterance.lang = 'fr-FR';
+                utterance.rate = 1.1; // Vitesse plus rapide pour le français
+                utterance.pitch = 1.0;
+                
+                // On cherche une voix française disponible
+                const frenchVoices = window.speechSynthesis.getVoices().filter(voice => voice.lang.startsWith('fr'));
+                if (frenchVoices.length > 0) {
+                    utterance.voice = frenchVoices[0];
+                }
             }
             
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            
-            const voices = window.speechSynthesis.getVoices();
-            const targetVoice = voices.find(voice => voice.lang === utterance.lang);
-            if (targetVoice) utterance.voice = targetVoice;
-            
+            // 2. On écoute la fin de la lecture pour remettre le bouton en mode Micro
             utterance.onend = () => {
                 document.getElementById('voiceBtn').classList.remove('speaking');
             };
