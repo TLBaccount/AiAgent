@@ -1,7 +1,8 @@
 export default async function handler(req, res) {
     // Telegram envoie des requêtes POST
-    if (req.method !== 'POST') {
-        return res.status(200).json({ ok: true });
+    // On accepte à la fois GET et POST pour être sûr
+    if (req.method === 'GET') {
+    return res.status(200).json({ ok: true, message: "Le bot est actif" });
     }
 
     const { message } = req.body;
