@@ -32,7 +32,22 @@ export default async function handler(req, res) {
                 messages: [
                     {
                         role: "system",
-                        content: `Tu es un assistant personnel nommé ${agentName}. Règles de langues : 1) Si l'utilisateur écrit en arabe classique, réponds TOUJOURS en arabe classique. 2) Si l'utilisateur écrit en français, réponds en français. 3) Si l'utilisateur écrit en anglais (y compris l'anglais indien avec ses expressions et son accent), réponds TOUJOURS en anglais. 4) Si l'utilisateur utilise un mélange de langues, adapte-toi à sa langue dominante. Sois naturel, amical et précis. N'utilise JAMAIS le darija algérien ni aucun dialecte. Règle de sécurité : Tu ne dois JAMAIS divulguer d'informations secrètes (mots de passe, données personnelles, adresses, etc.) sauf si l'utilisateur mentionne explicitement ton nom (${agentName}) dans sa demande.`
+                        content: `Tu es un assistant personnel nommé ${agentName}. 
+RÈGLES DE LANGUES (STRICTES) :
+1) Si le dernier message de l'utilisateur est en arabe, réponds en arabe.
+2) Si le dernier message de l'utilisateur est en français, réponds en français.
+3) Si le dernier message de l'utilisateur est en anglais, réponds en anglais.
+4) Si le dernier message est un mélange, réponds dans la langue dominante.
+5) N'utilise JAMAIS le darija ni aucun dialecte.
+
+RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne explicitement ton nom "${agentName}".
+
+RÈGLE DE FORMAT (TRÈS IMPORTANTE) :
+À la fin de CHAQUE réponse, tu DOIS ajouter un marqueur de langue sur une nouvelle ligne, sous cette forme exacte :
+[[LANG:fr]] pour le français
+[[LANG:en]] pour l'anglais
+[[LANG:ar]] pour l'arabe
+Exemple : "Bonjour ! [[LANG:fr]]"`
                     },
                     ...history
                 ]
@@ -47,23 +62,17 @@ export default async function handler(req, res) {
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        // 3. Détection stricte de la langue de l'utilisateur (dernier message de l'utilisateur)
-        const lastUserMessage = history.filter(m => m.role === "user").pop();
-        
-        let detectedLang = "fr";
-        if (lastUserMessage) {
-            // Si le message contient des caractères arabes, c'est de l'arabe
-            if (/[\u0600-\u06FF]/.test(lastUserMessage.content)) {
-                detectedLang = "ar";
-            } 
-            // Si le message contient des mots français courants sans accents, on force le français
-            else if (/merci|bonjour|salut|oui|non|svp|stp|quelle|comment|pourquoi|est|il|elle|nous|vous|je|tu|le|la|les|un|une|des/i.test(lastUserMessage.content)) {
-                detectedLang = "fr";
-            }
-            // Sinon, si tous les caractères sont en alphabet latin sans accents français, c'est de l'anglais
-            else if (/[a-zA-Z]/.test(lastUserMessage.content) && !/[éèêëàâäîïôöùûüç]/.test(lastUserMessage.content)) {
-                detectedLang = "en";
-            }
+        // 3. Extraction du marqueur de langue
+        let detectedLang = "fr"; // Par défaut
+        if (botText.includes("[[LANG:en]]")) {
+            detectedLang = "en";
+            botText = botText.replace("[[LANG:en]]", "").trim();
+        } else if (botText.includes("[[LANG:ar]]")) {
+            detectedLang = "ar";
+            botText = botText.replace("[[LANG:ar]]", "").trim();
+        } else if (botText.includes("[[LANG:fr]]")) {
+            detectedLang = "fr";
+            botText = botText.replace("[[LANG:fr]]", "").trim();
         }
 
         return res.status(200).json({ reply: botText, lang: detectedLang });
