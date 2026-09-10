@@ -9,13 +9,10 @@ export default async function handler(req, res) {
     const cleanText = text.substring(0, 500).replace(/\s+/g, ' ').trim();
 
     // Choix de la voix (ID de modèle Fish Audio)
-    // Références : 
-    // Français : f3f1d5e0-6a2b-4b1d-9b2c-1f3a5d7e9b01
-    // Anglais : 7f2b3a5c-8e1d-4f6a-9c3b-2e5d7a9c1f03
-    // Arabe : 6a4e3b2d-8c1f-4a5e-9d7b-3f2a1c4e5d67
+    // Les IDs que vous avez mis sont bons !
     let voiceId = "fe118d40f7e042dd86143e2938f0cc2e"; // Français par défaut
-    if (lang === 'en') voiceId = "79d0bd3e4e5444b18f7b6d89b5927bf1";
-    if (lang === 'ar') voiceId = "22a57197aa594615b96575b9cb021419";
+    if (lang === 'en') voiceId = "79d0bd3e4e5444b18f7b6d89b5927bf1"; // Anglais (Jordan)
+    if (lang === 'ar') voiceId = "22a57197aa594615b96575b9cb021419"; // Arabe
 
     try {
         // 1. Générer l'audio avec Fish Audio
@@ -26,7 +23,6 @@ export default async function handler(req, res) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "s2.1-pro-free", // Modèle gratuit de qualité professionnelle
                 text: cleanText,
                 voice: {
                     id: voiceId
