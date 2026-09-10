@@ -342,7 +342,7 @@
                 .replace(/\s+/g, ' '); // Enlever les espaces multiples
         }
 
-        // 6. Fonction pour parler (reçoit la langue exacte du serveur)
+        // 6. Fonction pour parler avec découpage du texte (Google TTS limite à 200 caractères)
         function speakText(text, lang) {
             if (currentAudio) {
                 currentAudio.pause();
@@ -351,34 +351,65 @@
             
             const cleanText = cleanTextForSpeech(text);
             
-            // Utilise la langue renvoyée par le serveur (plus de devinettes !)
-            let targetLang = 'fr';
-            if (lang === 'ar') targetLang = 'ar';
-            if (lang === 'en') targetLang = 'en';
+            // Découpage du texte en segments de 200 caractères max (coupure aux points)
+            const segments = [];
+            const sentences = cleanText.split(/(?<=[.!?])\s+/);
+            let currentSegment = "";
             
-            const audioUrl = `/api/tts?text=${encodeURIComponent(cleanText)}&lang=${targetLang}`;
+            for (const sentence of sentences) {
+                if ((currentSegment + " " + sentence).length > 200) {
+                    if (currentSegment) segments.push(currentSegment.trim());
+                    currentSegment = sentence;
+                } else {
+                    currentSegment += " " + sentence;
+                }
+            }
+            if (currentSegment.trim()) segments.push(currentSegment.trim());
             
-            const audio = new Audio(audioUrl);
-            currentAudio = audio;
+            // Si le texte est court, on le lit directement
+            if (segments.length === 0) segments.push(cleanText);
             
-            // Accélérer légèrement la lecture en arabe et en français
-            if (lang === 'ar') {
-                audio.playbackRate = 1.2; // Accélère l'arabe de 20%
-            } else if (lang === 'fr') {
-                audio.playbackRate = 1.1; // Accélère le français de 10%
-            } else {
-                audio.playbackRate = 1.0; // Anglais normal
+            let currentIndex = 0;
+            
+            function playNextSegment() {
+                if (currentIndex >= segments.length) {
+                    // Fin de la lecture
+                    currentAudio = null;
+                    document.getElementById('voiceBtn').classList.remove('speaking');
+                    return;
+                }
+                
+                const segment = segments[currentIndex];
+                currentIndex++;
+                
+                // Choix de la langue
+                let targetLang = 'fr';
+                if (lang === 'ar') targetLang = 'ar';
+                if (lang === 'en') targetLang = 'en';
+                
+                const audioUrl = `/api/tts?text=${encodeURIComponent(segment)}&lang=${targetLang}`;
+                const audio = new Audio(audioUrl);
+                currentAudio = audio;
+                
+                // Ajustement de la vitesse
+                if (lang === 'ar') audio.playbackRate = 1.2;
+                else if (lang === 'fr') audio.playbackRate = 1.1;
+                else audio.playbackRate = 1.0;
+                
+                audio.onended = () => {
+                    // Lire le segment suivant
+                    playNextSegment();
+                };
+                
+                audio.play().catch(error => {
+                    console.log("Erreur lecture audio:", error);
+                    // En cas d'erreur, on passe au segment suivant
+                    playNextSegment();
+                });
             }
             
-            audio.onended = () => {
-                currentAudio = null;
-                document.getElementById('voiceBtn').classList.remove('speaking');
-            };
-            
-            audio.play().catch(error => {
-                console.log("Erreur lecture audio:", error);
-                document.getElementById('voiceBtn').classList.remove('speaking');
-            });
+            // Démarrer la lecture
+            playNextSegment();
         }
 
         // 7. Fonction Microphone (reconnaissance vocale du navigateur)
