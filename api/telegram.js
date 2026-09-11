@@ -1,3 +1,6 @@
+// Anti-spam : mémorise les erreurs par utilisateur
+const errorCounts = {};
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(200).json({ ok: true });
@@ -14,13 +17,13 @@ export default async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
 
     try {
-        // 1. Appel à notre API de chat (avec toute la logique : langues, actions, etc.)
+        // 1. Appel à notre API de chat (avec toute la logique)
         const chatResponse = await fetch("https://ai-agent-tlb-agent.vercel.app/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 message: userText, 
-                history: [] // Historique vide pour Telegram (pour l'instant)
+                history: []
             })
         });
 
@@ -30,6 +33,9 @@ export default async function handler(req, res) {
 
         const data = await chatResponse.json();
         const botReply = data.reply;
+
+        // Réinitialiser le compteur d'erreurs en cas de succès
+        errorCounts[chatId] = 0;
 
         // 2. Envoi de la réponse à Telegram
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -46,20 +52,29 @@ export default async function handler(req, res) {
     } catch (error) {
         console.error("Erreur Telegram:", error);
         
-        // Envoi d'un message d'erreur à l'utilisateur
-        try {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    text: "Désolé, une erreur s'est produite. Réessayez plus tard."
-                })
-            });
-        } catch (e) {
-            console.error("Impossible d'envoyer le message d'erreur:", e);
+        // Incrémenter le compteur d'erreurs pour ce chat
+        if (!errorCounts[chatId]) {
+            errorCounts[chatId] = 0;
         }
-        
-        return res.status(500).json({ error: "Erreur serveur" });
+        errorCounts[chatId]++;
+
+        // Si moins de 3 erreurs, on envoie le message d'erreur
+        if (errorCounts[chatId] <= 3) {
+            try {
+                await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: `⚠️ Erreur (${errorCounts[chatId]}/3) : Une erreur s'est produite.`
+                    })
+                });
+            } catch (e) {
+                console.error("Impossible d'envoyer le message d'erreur:", e);
+            }
+        }
+
+        // On renvoie toujours 200 pour éviter que Telegram ne réessaie
+        return res.status(200).json({ ok: true });
     }
 }
