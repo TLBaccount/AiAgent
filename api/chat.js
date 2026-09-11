@@ -5,6 +5,7 @@ export default async function handler(req, res) {
 
     const { message, history } = req.body;
     const agentName = "Scoop";
+    const activepiecesUrl = "COLLEZ_ICI_VOTRE_URL_ACTIVEPIECES"; // <-- À REMPLACER
 
     // 1. Vérification du nom de l'agent (déblocage des secrets)
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
@@ -14,7 +15,47 @@ export default async function handler(req, res) {
         }
     }
 
-    // 2. Appel à l'IA Groq
+    // 2. Détection des demandes d'action
+    const actionKeywords = [
+        "envoie un email", "envoie un mail", "send an email", "send an email to",
+        "ajoute un événement", "ajoute un rendez-vous", "add an event", "create an event",
+        "cherche sur internet", "recherche", "search on the internet", "google"
+    ];
+    const isActionRequest = actionKeywords.some(keyword => message.toLowerCase().includes(keyword));
+
+    if (isActionRequest) {
+        try {
+            // 3. Envoi de la demande à Activepieces
+            const apResponse = await fetch(activepiecesUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    action: message,
+                    user: agentName
+                })
+            });
+
+            if (!apResponse.ok) {
+                throw new Error(`Erreur Activepieces: ${apResponse.status}`);
+            }
+
+            const apData = await apResponse.json();
+            
+            return res.status(200).json({ 
+                reply: `✅ Action reçue par Activepieces ! (Réponse: ${JSON.stringify(apData)})`, 
+                lang: "fr" 
+            });
+
+        } catch (error) {
+            console.error("Erreur Activepieces:", error);
+            return res.status(200).json({ 
+                reply: `❌ Désolé, je n'ai pas pu exécuter cette action. (Erreur: ${error.message})`, 
+                lang: "fr" 
+            });
+        }
+    }
+
+    // 4. Appel normal à l'IA Groq (pour les conversations)
     try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -33,21 +74,11 @@ export default async function handler(req, res) {
                     {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}. 
-RÈGLES DE LANGUES (STRICTES) :
-1) Si le dernier message de l'utilisateur est en arabe, réponds en arabe.
-2) Si le dernier message de l'utilisateur est en français, réponds en français.
-3) Si le dernier message de l'utilisateur est en anglais, réponds en anglais.
-4) Si le dernier message est un mélange, réponds dans la langue dominante.
-5) N'utilise JAMAIS le darija ni aucun dialecte.
+RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais. 4) Mélange → langue dominante. N'utilise JAMAIS le darija.
 
-RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne explicitement ton nom "${agentName}".
+RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne ton nom "${agentName}".
 
-RÈGLE DE FORMAT (TRÈS IMPORTANTE) :
-À la fin de CHAQUE réponse, tu DOIS ajouter un marqueur de langue sur une nouvelle ligne, sous cette forme exacte :
-[[LANG:fr]] pour le français
-[[LANG:en]] pour l'anglais
-[[LANG:ar]] pour l'arabe
-Exemple : "Bonjour ! [[LANG:fr]]"`
+RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur de langue : [[LANG:fr]], [[LANG:en]] ou [[LANG:ar]]`
                     },
                     ...history
                 ]
@@ -62,8 +93,8 @@ Exemple : "Bonjour ! [[LANG:fr]]"`
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        // 3. Extraction du marqueur de langue
-        let detectedLang = "fr"; // Par défaut
+        // Extraction du marqueur de langue
+        let detectedLang = "fr";
         if (botText.includes("[[LANG:en]]")) {
             detectedLang = "en";
             botText = botText.replace("[[LANG:en]]", "").trim();
@@ -79,6 +110,6 @@ Exemple : "Bonjour ! [[LANG:fr]]"`
 
     } catch (error) {
         console.error("Erreur serveur:", error);
-        return res.status(500).json({ error: "Erreur interne du serveur. Vérifiez la clé API Groq ou le modèle." });
+        return res.status(500).json({ error: "Erreur interne du serveur." });
     }
 }
