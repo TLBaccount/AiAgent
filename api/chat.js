@@ -5,7 +5,7 @@ export default async function handler(req, res) {
 
     const { message, history } = req.body;
     const agentName = "Scoop";
-    const activepiecesUrl = "COLLEZ_ICI_VOTRE_URL_ACTIVEPIECES"; // <-- À REMPLACER
+    const activepiecesUrl = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9"; // <-- À REMPLACER
 
     // 1. Vérification du nom de l'agent (déblocage des secrets)
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
