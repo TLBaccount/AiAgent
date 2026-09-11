@@ -5,7 +5,11 @@ export default async function handler(req, res) {
 
     const { message, history } = req.body;
     const agentName = "Scoop";
-    const activepiecesUrl = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9"; // <-- À REMPLACER
+
+    // URLs Activepieces
+    const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
+    const URL_EMAIL = "https://cloud.activepieces.com/api/v1/webhooks/w8ZXZlaQxhBQySnYAR0qH";
+    const URL_SEARCH = "https://cloud.activepieces.com/api/v1/webhooks/OAnWoBB07YtWjLJMnq11z";
 
     // 1. Vérification du nom de l'agent (déblocage des secrets)
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
@@ -15,22 +19,30 @@ export default async function handler(req, res) {
         }
     }
 
-    // 2. Détection des demandes d'action
-    const actionKeywords = [
-        "envoie un email", "envoie un mail", "send an email", "send an email to",
-        "ajoute un événement", "ajoute un rendez-vous", "add an event", "create an event",
-        "cherche sur internet", "recherche", "search on the internet", "google"
-    ];
-    const isActionRequest = actionKeywords.some(keyword => message.toLowerCase().includes(keyword));
+    // 2. Détection du type d'action
+    let activepiecesUrl = null;
+    let actionType = null;
 
-    if (isActionRequest) {
+    if (/email|mail|e-mail/i.test(message)) {
+        activepiecesUrl = URL_EMAIL;
+        actionType = "email";
+    } else if (/événement|agenda|rendez-vous|calendar|event/i.test(message)) {
+        activepiecesUrl = URL_CALENDAR;
+        actionType = "calendar";
+    } else if (/cherche|recherche|search|google/i.test(message)) {
+        activepiecesUrl = URL_SEARCH;
+        actionType = "search";
+    }
+
+    // 3. Si c'est une action, on l'envoie à Activepieces
+    if (activepiecesUrl) {
         try {
-            // 3. Envoi de la demande à Activepieces
             const apResponse = await fetch(activepiecesUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
                     action: message,
+                    type: actionType,
                     user: agentName
                 })
             });
@@ -42,7 +54,7 @@ export default async function handler(req, res) {
             const apData = await apResponse.json();
             
             return res.status(200).json({ 
-                reply: `✅ Action reçue par Activepieces ! (Réponse: ${JSON.stringify(apData)})`, 
+                reply: `✅ Action "${actionType}" reçue par Activepieces ! (Réponse: ${JSON.stringify(apData)})`, 
                 lang: "fr" 
             });
 
@@ -55,7 +67,7 @@ export default async function handler(req, res) {
         }
     }
 
-    // 4. Appel normal à l'IA Groq (pour les conversations)
+    // 4. Appel normal à l'IA Groq
     try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) {
@@ -74,10 +86,8 @@ export default async function handler(req, res) {
                     {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}. 
-RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais. 4) Mélange → langue dominante. N'utilise JAMAIS le darija.
-
+RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais.
 RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne ton nom "${agentName}".
-
 RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur de langue : [[LANG:fr]], [[LANG:en]] ou [[LANG:ar]]`
                     },
                     ...history
@@ -93,7 +103,6 @@ RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur de langue : 
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        // Extraction du marqueur de langue
         let detectedLang = "fr";
         if (botText.includes("[[LANG:en]]")) {
             detectedLang = "en";
