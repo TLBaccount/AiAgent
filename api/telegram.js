@@ -15,13 +15,13 @@ export default async function handler(req, res) {
 
     let userText = null;
     let detectedLang = null;
+    let isVoice = false; // <-- NOUVEAU
 
     try {
-        // --- 1. RÉCUPÉRATION DU TEXTE (Vocal OU Écrit) ---
-        
         if (message.text) {
             userText = message.text;
         } else if (message.voice) {
+            isVoice = true; // <-- NOUVEAU
             const fileId = message.voice.file_id;
             const fileInfoRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
             const fileInfo = await fileInfoRes.json();
@@ -69,20 +69,16 @@ export default async function handler(req, res) {
 
         if (!userText || userText.trim() === "") return res.status(200).json({ ok: true });
 
-        // --- 2. RÉCUPÉRATION DE L'HISTORIQUE COMPLET (TOUTES LANGUES) ---
-        
+        // Récupération de l'historique complet
         const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=100`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const historyData = await historyRes.json();
-        
-        // ON ENVOIE TOUT L'HISTORIQUE, SANS FILTRAGE
         const history = Array.isArray(historyData) 
             ? historyData.map(msg => ({ role: msg.role, content: msg.content }))
             : [];
 
-        // --- 3. APPEL À NOTRE API DE CHAT (avec la langue forcée) ---
-        
+        // Appel à api/chat.js
         const chatResponse = await fetch(`${siteUrl}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -99,8 +95,7 @@ export default async function handler(req, res) {
         const botReply = data.reply;
         const replyLang = data.lang || detectedLang || "fr";
 
-        // --- 4. SAUVEGARDE DANS SUPABASE ---
-        
+        // Sauvegarde dans Supabase
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
@@ -112,28 +107,28 @@ export default async function handler(req, res) {
             body: JSON.stringify({ role: "assistant", content: botReply })
         });
 
-        // --- 5. ENVOI DE LA RÉPONSE TEXTE ---
-        
+        // Envoi de la réponse texte
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: chatId, text: botReply })
         });
 
-        // --- 6. GÉNÉRATION ET ENVOI DE LA VOIX (avec la langue exacte de la réponse) ---
-        
-        const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
-        const audioResponse = await fetch(ttsUrl);
-        
-        if (audioResponse.ok) {
-            const audioBuffer = await audioResponse.arrayBuffer();
-            const audioFormData = new FormData();
-            audioFormData.append('chat_id', chatId);
-            audioFormData.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.mp3');
-            await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
-                method: 'POST',
-                body: audioFormData
-            });
+        // Envoi de la voix UNIQUEMENT si le message était vocal
+        if (isVoice) { // <-- CONDITION
+            const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
+            const audioResponse = await fetch(ttsUrl);
+            
+            if (audioResponse.ok) {
+                const audioBuffer = await audioResponse.arrayBuffer();
+                const audioFormData = new FormData();
+                audioFormData.append('chat_id', chatId);
+                audioFormData.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.mp3');
+                await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+                    method: 'POST',
+                    body: audioFormData
+                });
+            }
         }
 
         return res.status(200).json({ ok: true });
