@@ -4,10 +4,7 @@ export default async function handler(req, res) {
     }
 
     const { message } = req.body;
-
-    if (!message) {
-        return res.status(200).json({ ok: true });
-    }
+    if (!message) return res.status(200).json({ ok: true });
 
     const chatId = message.chat.id;
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -20,7 +17,7 @@ export default async function handler(req, res) {
     let detectedLang = null;
 
     try {
-        // --- 1. RÉCUPÉRATION DU TEXTE (Vocal OU Écrit) ---
+        // --- 1. RÉCUPÉRATION DU TEXTE ---
         
         if (message.text) {
             userText = message.text;
@@ -50,7 +47,6 @@ export default async function handler(req, res) {
             userText = whisperData.text;
             detectedLang = whisperData.language || null;
             
-            // Normaliser la langue
             if (detectedLang) {
                 const l = detectedLang.toLowerCase();
                 if (l.startsWith('fr') || l === 'french') detectedLang = 'fr';
@@ -71,33 +67,43 @@ export default async function handler(req, res) {
             return res.status(200).json({ ok: true });
         }
 
-        if (!userText || userText.trim() === "") {
-            return res.status(200).json({ ok: true });
+        if (!userText || userText.trim() === "") return res.status(200).json({ ok: true });
+
+        // --- 2. DÉTERMINER LA LANGUE COURANTE ---
+        
+        let currentLang = detectedLang;
+        if (!currentLang) {
+            if (/[\u0600-\u06FF]/.test(userText)) currentLang = 'ar';
+            else if (/[a-zA-Z]/.test(userText) && !/[éèêëàâäîïôöùûüç]/.test(userText)) currentLang = 'en';
+            else currentLang = 'fr';
         }
 
-        // --- 2. RÉCUPÉRATION DE L'HISTORIQUE DEPUIS SUPABASE ---
+        // --- 3. RÉCUPÉRATION DE L'HISTORIQUE FILTRÉ PAR LANGUE ---
         
-        const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=100`, {
-            headers: {
-                "apikey": supabaseKey,
-                "Authorization": `Bearer ${supabaseKey}`
-            }
+        const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=50`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
-        
         const historyData = await historyRes.json();
-        const history = Array.isArray(historyData) 
-            ? historyData.map(msg => ({ role: msg.role, content: msg.content }))
+        
+        // Filtrer : ne garder QUE les messages de la même langue
+        const filteredHistory = Array.isArray(historyData) 
+            ? historyData.filter(msg => {
+                const msgLang = /[\u0600-\u06FF]/.test(msg.content) ? 'ar' 
+                              : (/[a-zA-Z]/.test(msg.content) && !/[éèêëàâäîïôöùûüç]/.test(msg.content)) ? 'en' 
+                              : 'fr';
+                return msgLang === currentLang;
+            }).map(msg => ({ role: msg.role, content: msg.content }))
             : [];
 
-        // --- 3. APPEL À NOTRE API DE CHAT (avec langue forcée) ---
+        // --- 4. APPEL À API/CHAT AVEC LA LANGUE FORCÉE ---
         
         const chatResponse = await fetch(`${siteUrl}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 message: userText, 
-                history: history,
-                forcedLang: detectedLang
+                history: filteredHistory,
+                forcedLang: currentLang
             })
         });
 
@@ -105,32 +111,24 @@ export default async function handler(req, res) {
 
         const data = await chatResponse.json();
         const botReply = data.reply;
+        
+        // LA LANGUE DE LA RÉPONSE VIENT DIRECTEMENT DE API/CHAT (fiable)
+        const replyLang = data.lang || currentLang;
 
-        // --- 4. SAUVEGARDE DANS SUPABASE ---
+        // --- 5. SAUVEGARDE DANS SUPABASE ---
         
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
-            headers: {
-                "apikey": supabaseKey,
-                "Authorization": `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            },
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
             body: JSON.stringify({ role: "user", content: userText })
         });
-        
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
-            headers: {
-                "apikey": supabaseKey,
-                "Authorization": `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            },
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
             body: JSON.stringify({ role: "assistant", content: botReply })
         });
 
-        // --- 5. ENVOI DE LA RÉPONSE TEXTE ---
+        // --- 6. ENVOI DU TEXTE ---
         
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
@@ -138,23 +136,16 @@ export default async function handler(req, res) {
             body: JSON.stringify({ chat_id: chatId, text: botReply })
         });
 
-        // --- 6. GÉNÉRATION ET ENVOI DE LA VOIX ---
-        
-        // Détecter la langue du TEXTE DE LA RÉPONSE (pas celle de l'utilisateur)
-        let replyLang = 'fr';
-        if (/[\u0600-\u06FF]/.test(botReply)) replyLang = 'ar';
-        else if (/[a-zA-Z]/.test(botReply) && !/[éèêëàâäîïôöùûüç]/.test(botReply)) replyLang = 'en';
+        // --- 7. ENVOI DE LA VOIX (LANGUE EXACTE DE LA RÉPONSE) ---
         
         const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
         const audioResponse = await fetch(ttsUrl);
         
         if (audioResponse.ok) {
             const audioBuffer = await audioResponse.arrayBuffer();
-            
             const audioFormData = new FormData();
             audioFormData.append('chat_id', chatId);
             audioFormData.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.mp3');
-            
             await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
                 method: 'POST',
                 body: audioFormData
@@ -165,17 +156,13 @@ export default async function handler(req, res) {
 
     } catch (error) {
         console.error("Erreur Telegram:", error);
-        
         try {
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: chatId, text: `❌ Erreur : ${error.message}` })
             });
-        } catch (e) {
-            console.error("Impossible d'envoyer l'erreur:", e);
-        }
-        
+        } catch (e) { console.error("Impossible d'envoyer l'erreur:", e); }
         return res.status(200).json({ ok: true });
     }
 }
