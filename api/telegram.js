@@ -36,7 +36,7 @@ export default async function handler(req, res) {
             const formData = new FormData();
             formData.append('file', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg');
             formData.append('model', 'whisper-large-v3-turbo');
-            formData.append('response_format', 'verbose_json'); // Important pour avoir la langue
+            formData.append('response_format', 'verbose_json');
             
             const whisperRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
                 method: "POST",
@@ -48,9 +48,9 @@ export default async function handler(req, res) {
             
             const whisperData = await whisperRes.json();
             userText = whisperData.text;
-            detectedLang = whisperData.language || null; // Récupérer la langue détectée
+            detectedLang = whisperData.language || null;
             
-            // Normaliser la langue (Whisper renvoie parfois "french", "english", "arabic")
+            // Normaliser la langue
             if (detectedLang) {
                 const l = detectedLang.toLowerCase();
                 if (l.startsWith('fr') || l === 'french') detectedLang = 'fr';
@@ -97,7 +97,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({ 
                 message: userText, 
                 history: history,
-                forcedLang: detectedLang // Forcer la langue détectée par Whisper
+                forcedLang: detectedLang
             })
         });
 
@@ -105,7 +105,6 @@ export default async function handler(req, res) {
 
         const data = await chatResponse.json();
         const botReply = data.reply;
-        const botLang = data.lang || detectedLang || "fr";
 
         // --- 4. SAUVEGARDE DANS SUPABASE ---
         
@@ -139,9 +138,14 @@ export default async function handler(req, res) {
             body: JSON.stringify({ chat_id: chatId, text: botReply })
         });
 
-        // --- 6. GÉNÉRATION ET ENVOI DE LA VOIX (avec la bonne langue) ---
+        // --- 6. GÉNÉRATION ET ENVOI DE LA VOIX ---
         
-        const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${botLang}`;
+        // Détecter la langue du TEXTE DE LA RÉPONSE (pas celle de l'utilisateur)
+        let replyLang = 'fr';
+        if (/[\u0600-\u06FF]/.test(botReply)) replyLang = 'ar';
+        else if (/[a-zA-Z]/.test(botReply) && !/[éèêëàâäîïôöùûüç]/.test(botReply)) replyLang = 'en';
+        
+        const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
         const audioResponse = await fetch(ttsUrl);
         
         if (audioResponse.ok) {
