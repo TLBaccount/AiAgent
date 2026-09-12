@@ -52,13 +52,20 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Déterminer la langue du message actuel (pour la réponse)
+    // ============================================
+    // DÉTERMINATION ABSOLUE DE LA LANGUE
+    // ============================================
     let currentLang = forcedLang;
     if (!currentLang) {
         if (/[\u0600-\u06FF]/.test(message)) currentLang = 'ar';
         else if (/[a-zA-Z]/.test(message) && !/[éèêëàâäîïôöùûüç]/.test(message)) currentLang = 'en';
         else currentLang = 'fr';
     }
+
+    // ============================================
+    // HISTORIQUE : ON ENVOIE TOUT, MAIS L'IA SAIT QUOI FAIRE
+    // ============================================
+    const fullHistory = (history || []).slice(-30); // On limite à 30 derniers messages pour éviter la pollution
 
     try {
         const apiKey = process.env.GROQ_API_KEY;
@@ -74,18 +81,21 @@ export default async function handler(req, res) {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}.
 
-RÈGLE DE LANGUE (ABSOLUE) :
-- Tu dois répondre EXCLUSIVEMENT en ${currentLang.toUpperCase()}.
-- Si ${currentLang} = 'fr' → réponse en FRANÇAIS.
-- Si ${currentLang} = 'en' → réponse en ANGLAIS.
-- Si ${currentLang} = 'ar' → réponse en ARABE.
-- Ne mélange JAMAIS les langues dans ta réponse.
-- N'utilise JAMAIS le darija.
+RÈGLE ABSOLUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang.toUpperCase()}.
+- Si currentLang = 'fr' → réponse en FRANÇAIS uniquement.
+- Si currentLang = 'en' → réponse en ANGLAIS uniquement.
+- Si currentLang = 'ar' → réponse en ARABE uniquement.
 
-RÈGLE DE MÉMOIRE :
-- Tu as accès à TOUT l'historique de la conversation, quelle que soit la langue utilisée.
-- Tiens compte de tout ce qui a été dit précédemment, même si c'était dans une autre langue.
-- Exemple : si l'utilisateur a dit "Je m'appelle Fateh" en français, et qu'il demande maintenant "What is my name?" en anglais, tu dois répondre "Your name is Fateh" en anglais.
+INTERDICTIONS ABSOLUES :
+- Ne mélange JAMAIS les langues dans ta réponse.
+- N'utilise JAMAIS de mots dans une autre langue (sauf noms propres).
+- N'utilise JAMAIS le darija.
+- Ne te base PAS sur la langue des messages précédents.
+
+CONTEXTE MULTILINGUE :
+- L'historique peut contenir des messages en plusieurs langues.
+- Tu dois IGNORER la langue des messages précédents pour choisir ta langue de réponse.
+- Tu dois UNIQUEMENT te baser sur la valeur de currentLang ci-dessus.
 
 INFORMATIONS PERSONNELLES :
 ${publicText}
@@ -97,7 +107,7 @@ RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur ment
 
 RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute : [[LANG:${currentLang}]]`
                     },
-                    ...history
+                    ...fullHistory
                 ]
             })
         });
@@ -114,6 +124,9 @@ RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute : [[LANG:${currentLang}]
         if (botText.includes("[[LANG:en]]")) { detectedLang = "en"; botText = botText.replace("[[LANG:en]]", "").trim(); }
         else if (botText.includes("[[LANG:ar]]")) { detectedLang = "ar"; botText = botText.replace("[[LANG:ar]]", "").trim(); }
         else if (botText.includes("[[LANG:fr]]")) { detectedLang = "fr"; botText = botText.replace("[[LANG:fr]]", "").trim(); }
+
+        // Forcer la langue renvoyée à currentLang (au cas où le marqueur serait incorrect)
+        detectedLang = currentLang;
 
         await extractSecrets(message, botText, supabaseUrl, supabaseKey);
 
@@ -136,7 +149,6 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
         if (!Array.isArray(messages)) return;
         const totalTokens = messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
         if (totalTokens > 8000 * 0.85) {
-            console.log(`Nettoyage déclenché : ${totalTokens} tokens`);
             const messagesToDelete = Math.floor(messages.length * 0.3);
             const idsToDelete = messages.slice(0, messagesToDelete).map(m => m.id);
             await fetch(`${supabaseUrl}/rest/v1/messages?id=in.(${idsToDelete.join(',')})`, {
