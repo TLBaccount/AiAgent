@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     const { message, history } = req.body;
     const agentName = "Scoop";
 
-    // URLs Activepieces
+    // URLs Activepieces (à remplacer par vos vraies URLs)
     const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
     const URL_EMAIL = "https://cloud.activepieces.com/api/v1/webhooks/w8ZXZlaQxhBQySnYAR0qH";
     const URL_SEARCH = "https://cloud.activepieces.com/api/v1/webhooks/OAnWoBB07YtWjLJMnq11z";
@@ -86,8 +86,10 @@ export default async function handler(req, res) {
                     {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}. 
-RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais.
+RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais. 4) Mélange → langue dominante. N'utilise JAMAIS le darija.
+
 RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne ton nom "${agentName}".
+
 RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur de langue : [[LANG:fr]], [[LANG:en]] ou [[LANG:ar]]`
                     },
                     ...history
