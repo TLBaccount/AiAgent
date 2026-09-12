@@ -4,80 +4,55 @@ export default async function handler(req, res) {
 
     const cleanText = text.substring(0, 500).replace(/\s+/g, ' ').trim();
 
-    // Clés API (configurées sur Vercel)
-    const fishKey = process.env.FISH_AUDIO_API_KEY;
+    // Clés API
+    const azureKey = process.env.AZURE_SPEECH_KEY;
+    const azureRegion = process.env.AZURE_SPEECH_REGION;
     const hakimKey = process.env.HAKIM_API_KEY;
 
-    // IDs de voix Fish Audio
-    let fishVoiceId = "a0c8d49722294220a669a2b2dd37590b"; // FR
-    if (lang === 'en') fishVoiceId = "536d3a5e000945adb7038665781a4aca"; // EN
-    if (lang === 'ar') fishVoiceId = "1c3294e9c96b47dc8621dc8b2283bc97"; // AR
+    // Voix Azure (FR, EN, AR)
+    let azureVoice = "fr-FR-DeniseNeural"; // FR (voix féminine naturelle)
+    let azureLang = "fr-FR";
+    if (lang === 'en') { azureVoice = "en-US-JennyNeural"; azureLang = "en-US"; }
+    if (lang === 'ar') { azureVoice = "ar-SA-ZariyahNeural"; azureLang = "ar-SA"; }
 
-    // IDs de voix Hakim AI
-    let hakimVoiceId = "cmok1nvqa000f10ar8rpvncj4"; // AR (Khalid)
-    if (lang === 'fr') hakimVoiceId = "cmokbc1wm000rvu39gzf7twui"; // FR (Temporaire)
-    if (lang === 'en') hakimVoiceId = "cmok1nvo4000910arghdsayjr"; // EN (James)
+    // IDs de voix Hakim AI (fallback)
+    let hakimVoiceId = "cmok1nvqa000f10ar8rpvncj4"; // AR
+    if (lang === 'fr') hakimVoiceId = "cmokbc1wm000rvu39gzf7twui"; // FR
+    if (lang === 'en') hakimVoiceId = "cmok1nvo4000910arghdsayjr"; // EN
 
-    // --- Logique de cascade ---
-
-    // 1. Si Arabe : Hakim AI en priorité (meilleure qualité native)
-    if (lang === 'ar' && hakimKey) {
+    // --- 1. Azure TTS (Priorité) ---
+    if (azureKey && azureRegion) {
         try {
-            const response = await fetch("https://api.tryhakim.ai/v1/audio/speech", {
+            const ssml = `<speak version='1.0' xml:lang='${azureLang}'>
+                <voice name='${azureVoice}'>${cleanText}</voice>
+            </speak>`;
+
+            const response = await fetch(`https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {
                 method: "POST",
                 headers: {
-                    "Authorization": `Bearer ${hakimKey}`,
-                    "Content-Type": "application/json"
+                    "Ocp-Apim-Subscription-Key": azureKey,
+                    "Content-Type": "application/ssml+xml",
+                    "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
+                    "User-Agent": "Scoop"
                 },
-                body: JSON.stringify({
-                    model: "hakim-fast-v1",
-                    input: cleanText,
-                    voice: hakimVoiceId
-                })
-            });
-            if (response.ok) {
-                const arrayBuffer = await response.arrayBuffer();
-                res.setHeader('Content-Type', 'audio/mpeg');
-                return res.send(Buffer.from(arrayBuffer));
-            }
-            console.log("Hakim AI a échoué pour l'arabe, fallback sur Fish Audio...");
-        } catch (e) {
-            console.log("Erreur Hakim AI, fallback sur Fish Audio:", e.message);
-        }
-    }
-
-    // 2. Fish Audio (principal pour FR/EN, fallback pour AR)
-    if (fishKey) {
-        try {
-            const response = await fetch("https://api.fish.audio/v1/tts", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${fishKey}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    model: "s2.1-pro-free", // Le modèle va ICI, dans le body
-                    text: cleanText,
-                    reference_id: fishVoiceId,
-                    format: "mp3"
-                })
+                body: ssml
             });
 
             if (response.ok) {
                 const arrayBuffer = await response.arrayBuffer();
                 res.setHeader('Content-Type', 'audio/mpeg');
+                res.setHeader('Cache-Control', 'no-cache');
                 return res.send(Buffer.from(arrayBuffer));
             }
-            
             const errText = await response.text();
-            console.log("Fish Audio a échoué:", errText);
+            console.log("Azure a échoué:", errText);
         } catch (e) {
-            console.log("Erreur Fish Audio:", e.message);
+            console.log("Erreur Azure:", e.message);
         }
     }
 
-    // 3. Fallback ultime : Hakim AI pour FR/EN si Fish Audio échoue
-    if (hakimKey && (lang === 'fr' || lang === 'en')) {
+    // --- 2. Fallback : Hakim AI (pour toutes les langues) ---
+    if (hakimKey) {
         try {
             const response = await fetch("https://api.tryhakim.ai/v1/audio/speech", {
                 method: "POST",
@@ -94,10 +69,11 @@ export default async function handler(req, res) {
             if (response.ok) {
                 const arrayBuffer = await response.arrayBuffer();
                 res.setHeader('Content-Type', 'audio/mpeg');
+                res.setHeader('Cache-Control', 'no-cache');
                 return res.send(Buffer.from(arrayBuffer));
             }
         } catch (e) {
-            console.log("Erreur Hakim AI (fallback final):", e.message);
+            console.log("Erreur Hakim AI (fallback):", e.message);
         }
     }
 
