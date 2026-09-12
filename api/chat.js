@@ -3,10 +3,10 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { message, history } = req.body;
+    const { message, history, forcedLang } = req.body;
     const agentName = "Scoop";
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
-    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmbWdrZHB2cXF2bHpub2dmdXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4ODE2ODIsImV4cCI6MjEwNDQ1NzY4Mn0.KAgI6CBPW9URVG0cf9qn2t2GHsgmZNCwymkuLVgojlE"; // <-- REMPLACEZ ICI
+    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmbWdrZHB2cXF2bHpub2dmdXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4ODE2ODIsImV4cCI6MjEwNDQ1NzY4Mn0.KAgI6CBPW9URVG0cf9qn2t2GHsgmZNCwymkuLVgojlE";
 
     // URLs Activepieces
     const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const URL_SEARCH = "https://cloud.activepieces.com/api/v1/webhooks/OAnWoBB07YtWjLJMnq11z";
 
     // ============================================
-    // ÉTAPE 1 : NETTOYAGE PROACTIF (AVANT TOUT)
+    // ÉTAPE 1 : NETTOYAGE PROACTIF
     // ============================================
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
@@ -68,7 +68,18 @@ export default async function handler(req, res) {
     // ÉTAPE 4 : RÉCUPÉRATION DES SECRETS
     // ============================================
     const secrets = await getSecrets(supabaseUrl, supabaseKey);
-    const secretsText = secrets.map(s => `${s.key}: ${s.value}`).join('\n');
+    
+    // Séparer les informations personnelles des secrets
+    const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
+    const privateSecrets = Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
+    
+    const publicText = publicInfo.length > 0 
+        ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') 
+        : "Aucune information connue.";
+    
+    const privateText = privateSecrets.length > 0 
+        ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') 
+        : "Aucun secret enregistré.";
 
     // ============================================
     // ÉTAPE 5 : APPEL À GROQ
@@ -87,11 +98,16 @@ export default async function handler(req, res) {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}.
 
-INFORMATIONS QUE TU CONNAIS SUR L'UTILISATEUR :
-${secretsText || "Aucune information connue pour l'instant."}
+${forcedLang ? `⚠️ L'UTILISATEUR A PARLÉ EN ${forcedLang.toUpperCase()}. TU DOIS ABSOLUMENT RÉPONDRE EN ${forcedLang.toUpperCase()}.` : ''}
+
+INFORMATIONS PERSONNELLES (accessibles librement) :
+${publicText}
+
+SECRETS (protégés par ton nom "${agentName}") :
+${privateText}
 
 RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais. 4) Mélange → langue dominante. N'utilise JAMAIS le darija.
-RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS d'informations secrètes sauf si l'utilisateur mentionne ton nom "${agentName}".
+RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur mentionne ton nom "${agentName}".
 RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur : [[LANG:fr]], [[LANG:en]] ou [[LANG:ar]]`
                     },
                     ...history
@@ -107,7 +123,7 @@ RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur : [[LANG:fr]
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        let detectedLang = "fr";
+        let detectedLang = forcedLang || "fr";
         if (botText.includes("[[LANG:en]]")) { detectedLang = "en"; botText = botText.replace("[[LANG:en]]", "").trim(); }
         else if (botText.includes("[[LANG:ar]]")) { detectedLang = "ar"; botText = botText.replace("[[LANG:ar]]", "").trim(); }
         else if (botText.includes("[[LANG:fr]]")) { detectedLang = "fr"; botText = botText.replace("[[LANG:fr]]", "").trim(); }
@@ -141,6 +157,8 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
         });
         const messages = await res.json();
         
+        if (!Array.isArray(messages)) return;
+        
         const totalTokens = messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
         const MAX_TOKENS = 8000;
         
@@ -169,7 +187,8 @@ async function getSecrets(supabaseUrl, supabaseKey) {
         const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
-        return await res.json();
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
     } catch (error) {
         console.error("Erreur récupération secrets:", error);
         return [];
@@ -187,9 +206,14 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais UNIQUEMENT les informations personnelles importantes (nom, préférences, habitudes, dates importantes). 
+                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais UNIQUEMENT les informations personnelles importantes.
+
+DISTINCTION CRUCIALE :
+- Les informations PERSONNELLES (nom, préférences, habitudes) → is_secret = false
+- Les SECRETS (mots de passe, codes, adresses, emails privés, données bancaires) → is_secret = true
+
 Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
-Format attendu : [{"key": "nom", "value": "Fateh"}]
+Format attendu : [{"key": "nom", "value": "Fateh", "is_secret": false}]
 Si rien d'important, réponds exactement : []` 
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
@@ -199,16 +223,11 @@ Si rien d'important, réponds exactement : []`
         
         const data = await response.json();
         let content = data.choices[0].message.content.trim();
-        
-        // Nettoyage robuste du JSON
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        // Si l'IA a ajouté du texte avant le JSON, on extrait juste le JSON
         const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-            content = jsonMatch[0];
-        }
+        if (jsonMatch) content = jsonMatch[0];
         
-        console.log("Contenu extrait:", content); // Debug
+        console.log("Contenu extrait:", content);
         
         const secrets = JSON.parse(content);
         
@@ -218,11 +237,16 @@ Si rien d'important, réponds exactement : []`
         }
         
         for (const secret of secrets) {
-            console.log(`Enregistrement secret: ${secret.key} = ${secret.value}`);
+            console.log(`Enregistrement: ${secret.key} = ${secret.value} (secret: ${secret.is_secret})`);
             await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: "fateh", key: secret.key, value: secret.value })
+                body: JSON.stringify({ 
+                    user_id: "fateh", 
+                    key: secret.key, 
+                    value: secret.value,
+                    is_secret: secret.is_secret || false
+                })
             });
         }
     } catch (error) {
