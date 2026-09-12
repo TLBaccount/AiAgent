@@ -9,11 +9,11 @@ export default async function handler(req, res) {
     const azureRegion = process.env.AZURE_SPEECH_REGION;
     const hakimKey = process.env.HAKIM_API_KEY;
 
-    // Voix Azure (FR, EN, AR)
-    let azureVoice = "fr-FR-DeniseNeural"; // FR (voix féminine naturelle)
+    // Voix Azure masculines professionnelles (FR, EN, AR)
+    let azureVoice = "fr-FR-HenriNeural"; // FR (homme, professionnel)
     let azureLang = "fr-FR";
-    if (lang === 'en') { azureVoice = "en-US-JennyNeural"; azureLang = "en-US"; }
-    if (lang === 'ar') { azureVoice = "ar-SA-ZariyahNeural"; azureLang = "ar-SA"; }
+    if (lang === 'en') { azureVoice = "en-US-GuyNeural"; azureLang = "en-US"; }
+    if (lang === 'ar') { azureVoice = "ar-SA-HamedNeural"; azureLang = "ar-SA"; }
 
     // IDs de voix Hakim AI (fallback)
     let hakimVoiceId = "cmok1nvqa000f10ar8rpvncj4"; // AR
