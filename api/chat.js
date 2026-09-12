@@ -8,19 +8,12 @@ export default async function handler(req, res) {
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
     const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmbWdrZHB2cXF2bHpub2dmdXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4ODE2ODIsImV4cCI6MjEwNDQ1NzY4Mn0.KAgI6CBPW9URVG0cf9qn2t2GHsgmZNCwymkuLVgojlE";
 
-    // URLs Activepieces
     const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
     const URL_EMAIL = "https://cloud.activepieces.com/api/v1/webhooks/w8ZXZlaQxhBQySnYAR0qH";
     const URL_SEARCH = "https://cloud.activepieces.com/api/v1/webhooks/OAnWoBB07YtWjLJMnq11z";
 
-    // ============================================
-    // ÉTAPE 1 : NETTOYAGE PROACTIF
-    // ============================================
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
-    // ============================================
-    // ÉTAPE 2 : VÉRIFICATION DU NOM (SECRETS)
-    // ============================================
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
         if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -28,22 +21,11 @@ export default async function handler(req, res) {
         }
     }
 
-    // ============================================
-    // ÉTAPE 3 : DÉTECTION DES ACTIONS
-    // ============================================
     let activepiecesUrl = null;
     let actionType = null;
-
-    if (/email|mail|e-mail/i.test(message)) {
-        activepiecesUrl = URL_EMAIL;
-        actionType = "email";
-    } else if (/événement|agenda|rendez-vous|calendar|event/i.test(message)) {
-        activepiecesUrl = URL_CALENDAR;
-        actionType = "calendar";
-    } else if (/cherche|recherche|search|google/i.test(message)) {
-        activepiecesUrl = URL_SEARCH;
-        actionType = "search";
-    }
+    if (/email|mail|e-mail/i.test(message)) { activepiecesUrl = URL_EMAIL; actionType = "email"; }
+    else if (/événement|agenda|rendez-vous|calendar|event/i.test(message)) { activepiecesUrl = URL_CALENDAR; actionType = "calendar"; }
+    else if (/cherche|recherche|search|google/i.test(message)) { activepiecesUrl = URL_SEARCH; actionType = "search"; }
 
     if (activepiecesUrl) {
         try {
@@ -64,26 +46,27 @@ export default async function handler(req, res) {
         }
     }
 
-    // ============================================
-    // ÉTAPE 4 : RÉCUPÉRATION DES SECRETS
-    // ============================================
     const secrets = await getSecrets(supabaseUrl, supabaseKey);
-    
-    // Séparer les informations personnelles des secrets
     const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
     const privateSecrets = Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
-    
-    const publicText = publicInfo.length > 0 
-        ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') 
-        : "Aucune information connue.";
-    
-    const privateText = privateSecrets.length > 0 
-        ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') 
-        : "Aucun secret enregistré.";
+    const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
+    const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // ============================================
-    // ÉTAPE 5 : APPEL À GROQ
-    // ============================================
+    // FILTRAGE DE L'HISTORIQUE PAR LANGUE
+    let currentLang = forcedLang;
+    if (!currentLang) {
+        if (/[\u0600-\u06FF]/.test(message)) currentLang = 'ar';
+        else if (/[a-zA-Z]/.test(message) && !/[éèêëàâäîïôöùûüç]/.test(message)) currentLang = 'en';
+        else currentLang = 'fr';
+    }
+    
+    const filteredHistory = (history || []).filter(msg => {
+        const msgLang = /[\u0600-\u06FF]/.test(msg.content) ? 'ar' 
+                      : (/[a-zA-Z]/.test(msg.content) && !/[éèêëàâäîïôöùûüç]/.test(msg.content)) ? 'en' 
+                      : 'fr';
+        return msgLang === currentLang;
+    });
+
     try {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) return res.status(500).json({ error: "Clé API Groq manquante" });
@@ -98,19 +81,23 @@ export default async function handler(req, res) {
                         role: "system",
                         content: `Tu es un assistant personnel nommé ${agentName}.
 
+LANGUE DE LA CONVERSATION ACTUELLE : ${currentLang.toUpperCase()}
 ${forcedLang ? `⚠️ L'UTILISATEUR A PARLÉ EN ${forcedLang.toUpperCase()}. TU DOIS ABSOLUMENT RÉPONDRE EN ${forcedLang.toUpperCase()}.` : ''}
 
-INFORMATIONS PERSONNELLES (accessibles librement) :
+INFORMATIONS PERSONNELLES :
 ${publicText}
 
 SECRETS (protégés par ton nom "${agentName}") :
 ${privateText}
 
-RÈGLES DE LANGUES : 1) Arabe → arabe. 2) Français → français. 3) Anglais → anglais. 4) Mélange → langue dominante. N'utilise JAMAIS le darija.
-RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur mentionne ton nom "${agentName}".
-RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur : [[LANG:fr]], [[LANG:en]] ou [[LANG:ar]]`
+RÈGLES STRICTES :
+1) Tu dois répondre UNIQUEMENT en ${currentLang.toUpperCase()}.
+2) Ne mélange JAMAIS les langues.
+3) N'utilise JAMAIS le darija.
+4) Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur mentionne ton nom "${agentName}".
+5) À la fin de CHAQUE réponse, ajoute : [[LANG:${currentLang}]]`
                     },
-                    ...history
+                    ...filteredHistory
                 ]
             })
         });
@@ -123,14 +110,11 @@ RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur : [[LANG:fr]
         const data = await response.json();
         let botText = data.choices[0].message.content;
 
-        let detectedLang = forcedLang || "fr";
+        let detectedLang = currentLang;
         if (botText.includes("[[LANG:en]]")) { detectedLang = "en"; botText = botText.replace("[[LANG:en]]", "").trim(); }
         else if (botText.includes("[[LANG:ar]]")) { detectedLang = "ar"; botText = botText.replace("[[LANG:ar]]", "").trim(); }
         else if (botText.includes("[[LANG:fr]]")) { detectedLang = "fr"; botText = botText.replace("[[LANG:fr]]", "").trim(); }
 
-        // ============================================
-        // ÉTAPE 6 : EXTRACTION DES SECRETS
-        // ============================================
         await extractSecrets(message, botText, supabaseUrl, supabaseKey);
 
         return res.status(200).json({ reply: botText, lang: detectedLang });
@@ -140,11 +124,6 @@ RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute un marqueur : [[LANG:fr]
         return res.status(500).json({ error: "Erreur interne du serveur." });
     }
 }
-
-
-// ============================================
-// FONCTIONS DE GESTION DE MÉMOIRE
-// ============================================
 
 function estimateTokens(text) {
     return Math.ceil(text.length / 4);
@@ -156,7 +135,6 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const messages = await res.json();
-        
         if (!Array.isArray(messages)) return;
         
         const totalTokens = messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
@@ -164,17 +142,13 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
         
         if (totalTokens > MAX_TOKENS * 0.85) {
             console.log(`Nettoyage déclenché : ${totalTokens} tokens`);
-            
             await extractSecretsFromHistory(messages, supabaseUrl, supabaseKey);
-            
             const messagesToDelete = Math.floor(messages.length * 0.3);
             const idsToDelete = messages.slice(0, messagesToDelete).map(m => m.id);
-            
             await fetch(`${supabaseUrl}/rest/v1/messages?id=in.(${idsToDelete.join(',')})`, {
                 method: "DELETE",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
             });
-            
             console.log(`Nettoyage terminé : ${messagesToDelete} messages supprimés`);
         }
     } catch (error) {
@@ -230,11 +204,7 @@ Si rien d'important, réponds exactement : []`
         console.log("Contenu extrait:", content);
         
         const secrets = JSON.parse(content);
-        
-        if (secrets.length === 0) {
-            console.log("Aucun secret à enregistrer");
-            return;
-        }
+        if (secrets.length === 0) { console.log("Aucun secret à enregistrer"); return; }
         
         for (const secret of secrets) {
             console.log(`Enregistrement: ${secret.key} = ${secret.value} (secret: ${secret.is_secret})`);
@@ -257,4 +227,4 @@ Si rien d'important, réponds exactement : []`
 async function extractSecretsFromHistory(messages, supabaseUrl, supabaseKey) {
     const conversation = messages.map(m => `${m.role}: ${m.content}`).join('\n');
     await extractSecrets("Conversation ancienne", conversation, supabaseUrl, supabaseKey);
-}
+                            }
