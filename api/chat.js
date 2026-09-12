@@ -96,7 +96,7 @@ ${privateText}`;
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
+                model: "openai/gpt-oss-120b",
                 messages: [
                     { role: "system", content: systemPrompt },
                     ...fullHistory,
@@ -164,7 +164,7 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
             body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
+                model: "openai/gpt-oss-120b",
                 messages: [
                     { role: "system", content: `Extrait les informations importantes. Réponds UNIQUEMENT en JSON : [{"key": "nom", "value": "Fateh", "is_secret": false}]. Si rien, réponds [].` },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
