@@ -185,7 +185,13 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             body: JSON.stringify({
                 model: "openai/gpt-oss-20b",
                 messages: [
-                    { role: "system", content: "Extrait les informations importantes (nom, préférences, habitudes) de cet échange. Réponds UNIQUEMENT en JSON : [{\"key\": \"nom\", \"value\": \"Fateh\"}]. Si rien d'important, réponds []." },
+                    { 
+                        role: "system", 
+                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais UNIQUEMENT les informations personnelles importantes (nom, préférences, habitudes, dates importantes). 
+Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
+Format attendu : [{"key": "nom", "value": "Fateh"}]
+Si rien d'important, réponds exactement : []` 
+                    },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
             })
@@ -193,11 +199,26 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
         
         const data = await response.json();
         let content = data.choices[0].message.content.trim();
+        
+        // Nettoyage robuste du JSON
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Si l'IA a ajouté du texte avant le JSON, on extrait juste le JSON
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            content = jsonMatch[0];
+        }
+        
+        console.log("Contenu extrait:", content); // Debug
         
         const secrets = JSON.parse(content);
         
+        if (secrets.length === 0) {
+            console.log("Aucun secret à enregistrer");
+            return;
+        }
+        
         for (const secret of secrets) {
+            console.log(`Enregistrement secret: ${secret.key} = ${secret.value}`);
             await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
