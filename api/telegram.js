@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     let detectedLang = null;
 
     try {
-        // --- 1. RÉCUPÉRATION DU TEXTE ---
+        // --- 1. RÉCUPÉRATION DU TEXTE (Vocal OU Écrit) ---
         
         if (message.text) {
             userText = message.text;
@@ -69,41 +69,27 @@ export default async function handler(req, res) {
 
         if (!userText || userText.trim() === "") return res.status(200).json({ ok: true });
 
-        // --- 2. DÉTERMINER LA LANGUE COURANTE ---
+        // --- 2. RÉCUPÉRATION DE L'HISTORIQUE COMPLET (TOUTES LANGUES) ---
         
-        let currentLang = detectedLang;
-        if (!currentLang) {
-            if (/[\u0600-\u06FF]/.test(userText)) currentLang = 'ar';
-            else if (/[a-zA-Z]/.test(userText) && !/[éèêëàâäîïôöùûüç]/.test(userText)) currentLang = 'en';
-            else currentLang = 'fr';
-        }
-
-        // --- 3. RÉCUPÉRATION DE L'HISTORIQUE FILTRÉ PAR LANGUE ---
-        
-        const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=50`, {
+        const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=100`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const historyData = await historyRes.json();
         
-        // Filtrer : ne garder QUE les messages de la même langue
-        const filteredHistory = Array.isArray(historyData) 
-            ? historyData.filter(msg => {
-                const msgLang = /[\u0600-\u06FF]/.test(msg.content) ? 'ar' 
-                              : (/[a-zA-Z]/.test(msg.content) && !/[éèêëàâäîïôöùûüç]/.test(msg.content)) ? 'en' 
-                              : 'fr';
-                return msgLang === currentLang;
-            }).map(msg => ({ role: msg.role, content: msg.content }))
+        // ON ENVOIE TOUT L'HISTORIQUE, SANS FILTRAGE
+        const history = Array.isArray(historyData) 
+            ? historyData.map(msg => ({ role: msg.role, content: msg.content }))
             : [];
 
-        // --- 4. APPEL À API/CHAT AVEC LA LANGUE FORCÉE ---
+        // --- 3. APPEL À NOTRE API DE CHAT (avec la langue forcée) ---
         
         const chatResponse = await fetch(`${siteUrl}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 message: userText, 
-                history: filteredHistory,
-                forcedLang: currentLang
+                history: history,
+                forcedLang: detectedLang
             })
         });
 
@@ -111,11 +97,9 @@ export default async function handler(req, res) {
 
         const data = await chatResponse.json();
         const botReply = data.reply;
-        
-        // LA LANGUE DE LA RÉPONSE VIENT DIRECTEMENT DE API/CHAT (fiable)
-        const replyLang = data.lang || currentLang;
+        const replyLang = data.lang || detectedLang || "fr";
 
-        // --- 5. SAUVEGARDE DANS SUPABASE ---
+        // --- 4. SAUVEGARDE DANS SUPABASE ---
         
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
@@ -128,7 +112,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({ role: "assistant", content: botReply })
         });
 
-        // --- 6. ENVOI DU TEXTE ---
+        // --- 5. ENVOI DE LA RÉPONSE TEXTE ---
         
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
@@ -136,7 +120,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({ chat_id: chatId, text: botReply })
         });
 
-        // --- 7. ENVOI DE LA VOIX (LANGUE EXACTE DE LA RÉPONSE) ---
+        // --- 6. GÉNÉRATION ET ENVOI DE LA VOIX (avec la langue exacte de la réponse) ---
         
         const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
         const audioResponse = await fetch(ttsUrl);
