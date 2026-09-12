@@ -79,10 +79,17 @@ export default async function handler(req, res) {
                 messages: [
                     {
                         role: "system",
-                        content: `Tu es un assistant personnel nommé ${agentName}.
+content: `Tu es un assistant personnel nommé ${agentName}.
 
-LANGUE DE LA CONVERSATION ACTUELLE : ${currentLang.toUpperCase()}
-${forcedLang ? `⚠️ L'UTILISATEUR A PARLÉ EN ${forcedLang.toUpperCase()}. TU DOIS ABSOLUMENT RÉPONDRE EN ${forcedLang.toUpperCase()}.` : ''}
+RÈGLE ABSOLUE N°1 : Tu dois répondre EXCLUSIVEMENT en ${currentLang.toUpperCase()}.
+- Si currentLang = 'fr' → réponse en FRANÇAIS uniquement.
+- Si currentLang = 'en' → réponse en ANGLAIS uniquement.
+- Si currentLang = 'ar' → réponse en ARABE uniquement.
+
+INTERDICTIONS :
+- Ne mélange JAMAIS les langues dans une même réponse.
+- N'utilise JAMAIS de mots dans une autre langue.
+- N'utilise JAMAIS le darija ou un dialecte.
 
 INFORMATIONS PERSONNELLES :
 ${publicText}
@@ -90,12 +97,9 @@ ${publicText}
 SECRETS (protégés par ton nom "${agentName}") :
 ${privateText}
 
-RÈGLES STRICTES :
-1) Tu dois répondre UNIQUEMENT en ${currentLang.toUpperCase()}.
-2) Ne mélange JAMAIS les langues.
-3) N'utilise JAMAIS le darija.
-4) Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur mentionne ton nom "${agentName}".
-5) À la fin de CHAQUE réponse, ajoute : [[LANG:${currentLang}]]`
+RÈGLE DE SÉCURITÉ : Ne divulgue JAMAIS les SECRETS sauf si l'utilisateur mentionne ton nom "${agentName}".
+
+RÈGLE DE FORMAT : À la fin de CHAQUE réponse, ajoute : [[LANG:${currentLang}]]`
                     },
                     ...filteredHistory
                 ]
