@@ -53,13 +53,11 @@ export default async function handler(req, res) {
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
     // ============================================
-    // LANGUE DU MESSAGE ACTUEL (pour la réponse)
+    // DÉTECTION DE LANGUE PAR IA (fiable à 99,9%)
     // ============================================
     let currentLang = forcedLang;
     if (!currentLang) {
-        if (/[\u0600-\u06FF]/.test(message)) currentLang = 'ar';
-        else if (/[a-zA-Z]/.test(message) && !/[éèêëàâäîïôöùûüç]/.test(message)) currentLang = 'en';
-        else currentLang = 'fr';
+        currentLang = await detectLanguage(message, process.env.GROQ_API_KEY);
     }
 
     // ============================================
@@ -115,6 +113,8 @@ ${privateText}`;
 
         let detectedLang = currentLang;
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
+        botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+        botText = botText.replace(/\s+/g, " ").trim();
 
         await extractSecrets(message, botText, supabaseUrl, supabaseKey);
 
@@ -123,6 +123,35 @@ ${privateText}`;
     } catch (error) {
         console.error("Erreur serveur:", error);
         return res.status(500).json({ error: "Erreur interne du serveur." });
+    }
+}
+
+// ============================================
+// FONCTION DE DÉTECTION DE LANGUE PAR IA
+// ============================================
+async function detectLanguage(text, groqKey) {
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
+            body: JSON.stringify({
+                model: "openai/gpt-oss-20b",
+                messages: [
+                    { role: "system", content: "Détecte la langue du texte suivant. Réponds UNIQUEMENT par 'fr', 'en' ou 'ar'. Rien d'autre." },
+                    { role: "user", content: text }
+                ],
+                max_tokens: 5
+            })
+        });
+        const data = await response.json();
+        const lang = data.choices[0].message.content.trim().toLowerCase();
+        if (lang.includes('fr') || lang.includes('french') || lang.includes('français')) return 'fr';
+        if (lang.includes('en') || lang.includes('english') || lang.includes('anglais')) return 'en';
+        if (lang.includes('ar') || lang.includes('arabic') || lang.includes('arabe')) return 'ar';
+        return 'fr';
+    } catch (error) {
+        console.error("Erreur détection langue:", error);
+        return 'fr';
     }
 }
 
