@@ -135,7 +135,7 @@ async function detectLanguage(text, groqKey) {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
             body: JSON.stringify({
-                model: "openai/gpt-oss-20b",
+                model: "openai/gpt-oss-120b",
                 messages: [
                     { role: "system", content: "Détecte la langue du texte suivant. Réponds UNIQUEMENT par 'fr', 'en' ou 'ar'. Rien d'autre." },
                     { role: "user", content: text }
