@@ -249,10 +249,11 @@ async function getSecrets(supabaseUrl, supabaseKey) {
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
-        console.log("=== EXTRACT SECRETS ===");
-        console.log("Message:", message);
-        console.log("ForceSecret:", forceSecret);
-        console.log("SupabaseKey présent:", !!supabaseKey);
+        console.error("=== EXTRACT SECRETS ===");
+        console.error("Message:", message);
+        console.error("ForceSecret:", forceSecret);
+        console.error("SupabaseKey présent:", !!supabaseKey);
+        
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -260,18 +261,18 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                 model: "openai/gpt-oss-20b",
                 reasoning_effort: "low",
                 response_format: { type: "json_object" },
-                    messages: [
-                            { 
-                                role: "system", 
-                                content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
+                messages: [
+                    { 
+                        role: "system", 
+                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
 
-                    RÈGLE DE CLASSIFICATION (ABSOLUE) :
-                    - Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
-                    - Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN).
+RÈGLE DE CLASSIFICATION (ABSOLUE) :
+- Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
+- Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN).
 
-                    Réponds UNIQUEMENT avec un objet JSON de cette forme exacte :
-                    {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
-                    Si rien d'important : {"secrets": []}`
+Réponds UNIQUEMENT avec un objet JSON de cette forme exacte :
+{"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
+Si rien d'important : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
@@ -281,16 +282,20 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
         let content = data.choices[0].message.content.trim();
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
         
-        // Chercher l'objet JSON {"secrets": [...]}
-        const jsonMatch = content.match(/\{[\s\S]*\}/);  // ✅ Cherche un OBJET
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) content = jsonMatch[0];
+        
+        console.error("Contenu brut:", content);
         
         const parsed = JSON.parse(content);
         const secrets = parsed.secrets || [];
+        
+        console.error("Secrets extraits:", JSON.stringify(secrets));
+        
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             
-            await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+            const writeResponse = await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({ 
@@ -300,10 +305,11 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                     is_secret: finalIsSecret
                 })
             });
+            
+            console.error("Écriture Supabase:", writeResponse.status);
         }
-        console.log("Secrets extraits:", secrets);
-        console.log("=== FIN EXTRACT ===");
+        console.error("=== FIN EXTRACT ===");
     } catch (error) { 
-        console.error("Erreur extraction secrets:", error); 
+        console.error("Erreur extraction secrets:", error.message); 
     }
 }
