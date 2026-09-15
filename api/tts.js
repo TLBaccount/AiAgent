@@ -2,7 +2,7 @@ export default async function handler(req, res) {
     const { text, lang } = req.query;
     if (!text) return res.status(400).json({ error: 'Texte manquant' });
 
-    const cleanText = text.substring(0, 500).replace(/\s+/g, ' ').trim();
+    const cleanText = text.replace(/\s+/g, ' ').trim();
 
     // Clés API
     const azureKey = process.env.AZURE_SPEECH_KEY;
