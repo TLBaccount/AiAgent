@@ -249,8 +249,8 @@ RÈGLE DE CLASSIFICATION (TRÈS IMPORTANTE) :
 - Les informations SECRÈTES (email, mot de passe, adresse postale, numéro de téléphone, données bancaires, codes, identifiants) → is_secret = true
 
 EXEMPLES :
-- "Je m'appelle Fateh" → [{"key": "nom", "value": "Fateh", "is_secret": false}]
-- "Mon email est fateh@example.com" → [{"key": "email", "value": "fateh@example.com", "is_secret": true}]
+- "Je m'appelle Fatah" → [{"key": "nom", "value": "Fatah", "is_secret": false}]
+- "Mon email est fatah@example.com" → [{"key": "email", "value": "fatah@example.com", "is_secret": true}]
 - "J'aime le café" → [{"key": "préférence", "value": "aime le café", "is_secret": false}]
 - "Mon mot de passe est 1234" → [{"key": "mot_de_passe", "value": "1234", "is_secret": true}]
 
@@ -272,7 +272,7 @@ Si rien d'important, réponds exactement : []`
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({ 
-                    user_id: "fateh", 
+                    user_id: "fatah", 
                     key: secret.key, 
                     value: secret.value,
                     is_secret: secret.is_secret || false
