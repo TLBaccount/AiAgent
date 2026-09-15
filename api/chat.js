@@ -56,10 +56,8 @@ export default async function handler(req, res) {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) return res.status(500).json({ error: "Clé API Groq manquante" });
 
-        // ============================================
         // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
-        // ============================================
-        await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
+        const debugResult = await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -68,28 +66,23 @@ RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 
 RÈGLE DES OUTILS (CRITIQUE) :
 - Tu as accès à 3 outils : send_email, create_event, search_web.
 - Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
-- Si l'utilisateur parle de sa famille, de son nom, de ses préférences, ou fait une simple conversation, tu NE DOIS PAS appeler d'outil. Réponds normalement.
 
 RÈGLES STRICTES POUR LES OUTILS :
-- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email", "envoie un mail", "écris un email", "send an email".
+- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email", "envoie un mail", "send an email".
 - create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous", "add an event".
 - search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "search", "google".
 
 INTERDICTIONS ABSOLUES :
-- Si l'utilisateur dit "mon nom de famille est X" → NE PAS appeler d'outil.
-- Si l'utilisateur dit "je m'appelle X" → NE PAS appeler d'outil.
-- Si l'utilisateur dit "comment je m'appelle" → NE PAS appeler d'outil.
+- Si l'utilisateur parle de sa famille, de son nom, de ses préférences → NE PAS appeler d'outil.
 - Ne mélange JAMAIS les langues.
 - N'utilise JAMAIS le darija.
 
 RÈGLE DES SECRETS :
 - Les SECRETS sont protégés. Ne les divulgue JAMAIS sans autorisation.
-- Pour autoriser la divulgation d'un secret, l'utilisateur doit dire "Scoop" dans sa demande.
+- Pour autoriser la divulgation d'un secret, l'utilisateur doit dire "Scoop".
 
 SUIVI DU FIL :
-- L'historique peut contenir plusieurs langues.
 - Tiens compte de TOUT l'historique.
-- Si on te demande une information, cherche dans l'historique.
 
 INFORMATIONS CONNUES (non-secrètes) :
 ${publicText}
@@ -102,7 +95,7 @@ ${privateText}`;
                 type: "function",
                 function: {
                     name: "send_email",
-                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email.",
+                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -134,7 +127,7 @@ ${privateText}`;
                 type: "function",
                 function: {
                     name: "search_web",
-                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite de recherche.",
+                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -169,6 +162,9 @@ ${privateText}`;
         const data = await response.json();
         const responseMessage = data.choices[0].message;
 
+        // DEBUG : Ajouter les infos de debug à la réponse
+        const debugString = `\n\n🔍 DEBUG: ${JSON.stringify(debugResult)}`;
+
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
@@ -196,7 +192,7 @@ ${privateText}`;
                 });
                 const apData = await apResponse.json();
                 return res.status(200).json({ 
-                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, 
+                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})` + debugString, 
                     lang: currentLang 
                 });
             }
@@ -207,7 +203,7 @@ ${privateText}`;
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
-        return res.status(200).json({ reply: botText, lang: currentLang });
+        return res.status(200).json({ reply: botText + debugString, lang: currentLang });
 
     } catch (error) {
         console.error("Erreur serveur:", error);
@@ -248,12 +244,9 @@ async function getSecrets(supabaseUrl, supabaseKey) {
 
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
+    let debugInfo = { step: "start" };
     try {
-        console.error("=== EXTRACT SECRETS ===");
-        console.error("Message:", message);
-        console.error("ForceSecret:", forceSecret);
-        console.error("SupabaseKey présent:", !!supabaseKey);
-        
+        debugInfo.step = "fetch_groq";
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -268,30 +261,30 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
 
 RÈGLE DE CLASSIFICATION (ABSOLUE) :
 - Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
-- Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN).
+- Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles.
 
-Réponds UNIQUEMENT avec un objet JSON de cette forme exacte :
-{"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
-Si rien d'important : {"secrets": []}`
+Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
+Si rien : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
             })
         });
+        
+        debugInfo.step = "parse_json";
         const data = await response.json();
         let content = data.choices[0].message.content.trim();
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-        
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) content = jsonMatch[0];
         
-        console.error("Contenu brut:", content);
+        debugInfo.rawContent = content;
         
         const parsed = JSON.parse(content);
         const secrets = parsed.secrets || [];
+        debugInfo.secrets = secrets;
         
-        console.error("Secrets extraits:", JSON.stringify(secrets));
-        
+        debugInfo.step = "write_supabase";
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             
@@ -306,10 +299,11 @@ Si rien d'important : {"secrets": []}`
                 })
             });
             
-            console.error("Écriture Supabase:", writeResponse.status);
+            debugInfo.supabaseStatus = writeResponse.status;
         }
-        console.error("=== FIN EXTRACT ===");
+        debugInfo.step = "done";
     } catch (error) { 
-        console.error("Erreur extraction secrets:", error.message); 
+        debugInfo.error = error.message;
     }
+    return debugInfo;
 }
