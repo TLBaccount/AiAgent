@@ -1,4 +1,5 @@
 import { francAll } from 'franc';
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -16,30 +17,34 @@ export default async function handler(req, res) {
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
     // ============================================
-    // DÉTECTION DE LA LANGUE (fiable et simple)
+    // DÉTECTION DE LA LANGUE
     // ============================================
     let currentLang = forcedLang;
     
-    // 1. Chercher un préfixe [fr], [en], [ar] dans le message
     const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
     if (prefixMatch) {
         currentLang = prefixMatch[1].toLowerCase();
         message = message.replace(/^\[(fr|en|ar)\]\s*/i, '').trim();
     }
     
-    // 2. Si pas de préfixe et pas de forcedLang, on utilise la langue du dernier message
     if (!currentLang) {
-    if (/[\u0600-\u06FF]/.test(message)) {
-        currentLang = 'ar';
-    } else {
-        const guesses = francAll(message, { minLength: 1 });
-        const top = guesses.find(([code]) => code === 'fra' || code === 'eng');
-        currentLang = top && top[0] === 'eng' ? 'en' : 'fr';
+        if (/[\u0600-\u06FF]/.test(message)) {
+            currentLang = 'ar';
+        } else {
+            const guesses = francAll(message, { minLength: 1 });
+            const top = guesses.find(([code]) => code === 'fra' || code === 'eng');
+            currentLang = top && top[0] === 'eng' ? 'en' : 'fr';
+        }
     }
-}
 
-    if (message.toLowerCase().includes(agentName.toLowerCase())) {
-        if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
+    // ============================================
+    // DÉTECTION DU MOT-CLÉ "MEMO"
+    // ============================================
+    const hasMemoKeyword = /\bmemo\b/i.test(message);
+    const cleanMessage = message.replace(/\bmemo\b/i, '').trim();
+
+    if (cleanMessage.toLowerCase().includes(agentName.toLowerCase())) {
+        if (cleanMessage.toLowerCase().includes("quelle heure") || cleanMessage.toLowerCase().includes("what time") || cleanMessage.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
             return res.status(200).json({ reply: `Il est actuellement ${heure}.`, lang: "fr" });
         }
@@ -51,7 +56,6 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Limiter l'historique pour ne pas dépasser 12K TPM
     const fullHistory = (history || []).slice(-20);
 
     try {
@@ -83,7 +87,6 @@ ${publicText}
 SECRETS (protégés par ton nom "Scoop") :
 ${privateText}`;
 
-        // Outils disponibles
         const tools = [
             {
                 type: "function",
@@ -141,7 +144,7 @@ ${privateText}`;
                 messages: [
                     { role: "system", content: systemPrompt },
                     ...fullHistory,
-                    { role: "user", content: message }
+                    { role: "user", content: cleanMessage }
                 ],
                 tools: tools,
                 tool_choice: "auto"
@@ -156,7 +159,6 @@ ${privateText}`;
         const data = await response.json();
         const responseMessage = data.choices[0].message;
 
-        // Vérifier si l'IA veut appeler un outil
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
@@ -190,13 +192,12 @@ ${privateText}`;
             }
         }
 
-        // Réponse normale
         let botText = responseMessage.content.trim();
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
-        await extractSecrets(message, botText, supabaseUrl, supabaseKey);
+        await extractSecrets(message, botText, supabaseUrl, supabaseKey, hasMemoKeyword);
 
         return res.status(200).json({ reply: botText, lang: currentLang });
 
@@ -227,12 +228,19 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     } catch (error) { console.error("Erreur nettoyage:", error); }
 }
 
-async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
+async function getSecrets(supabaseUrl, supabaseKey) {
+    try {
+        const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+    } catch (error) { return []; }
+}
+
+async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
-        // Détection du mot-clé "Memo"
-        const hasMemoKeyword = /\bmemo\b/i.test(message) || /\bmemo\b/i.test(botReply);
-        
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -244,13 +252,13 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
                         content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
 
 RÈGLE DE CLASSIFICATION (ABSOLUE) :
-- Si le message contient le mot-clé "Memo", TOUTES les informations extraites de ce message sont classées comme SECRÈTES (is_secret = true).
-- Sinon, les informations extraites sont classées comme NON-SECRÈTES (is_secret = false), SAUF si elles sont intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN, données bancaires).
+- Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
+- Sinon, les informations sont classées comme NON-SECRÈTES (is_secret = false), SAUF si elles sont intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN, données bancaires).
 
 EXEMPLES :
 - "Memo le nom de ma femme est Sarah" → [{"key": "nom_femme", "value": "Sarah", "is_secret": true}]
-- "Je m'appelle Fatah" → [{"key": "nom", "value": "Fatah", "is_secret": false}]
-- "Mon email est fatah@example.com" → [{"key": "email", "value": "fatah@example.com", "is_secret": true}]
+- "Je m'appelle Fateh" → [{"key": "nom", "value": "Fateh", "is_secret": false}]
+- "Mon email est fateh@example.com" → [{"key": "email", "value": "fateh@example.com", "is_secret": true}]
 
 Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
 Si rien d'important, réponds exactement : []` 
@@ -266,6 +274,8 @@ Si rien d'important, réponds exactement : []`
         if (jsonMatch) content = jsonMatch[0];
         const secrets = JSON.parse(content);
         for (const secret of secrets) {
+            const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
+            
             await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
@@ -273,7 +283,7 @@ Si rien d'important, réponds exactement : []`
                     user_id: "fatah", 
                     key: secret.key, 
                     value: secret.value,
-                    is_secret: secret.is_secret || false
+                    is_secret: finalIsSecret
                 })
             });
         }
