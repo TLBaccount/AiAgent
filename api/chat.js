@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         // ============================================
         // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
         // ============================================
-        await extractSecrets(cleanMessage, "", supabaseUrl, supabaseKey, hasMemoKeyword);
+        await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
