@@ -56,30 +56,35 @@ export default async function handler(req, res) {
         const apiKey = process.env.GROQ_API_KEY;
         if (!apiKey) return res.status(500).json({ error: "Clé API Groq manquante" });
 
+        // ============================================
+        // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
+        // ============================================
+        await extractSecrets(cleanMessage, "", supabaseUrl, supabaseKey, hasMemoKeyword);
+
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
-RÈGLE DES OUTILS (TRÈS IMPORTANTE) :
+RÈGLE DES OUTILS (CRITIQUE) :
 - Tu as accès à 3 outils : send_email, create_event, search_web.
-- Tu ne dois appeler un outil QUE si l'utilisateur demande EXPLICITEMENT une action.
-- Si l'utilisateur parle de sa famille, de son nom, ou d'autre chose, tu NE DOIS PAS appeler d'outil. Réponds normalement.
+- Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
+- Si l'utilisateur parle de sa famille, de son nom, de ses préférences, ou fait une simple conversation, tu NE DOIS PAS appeler d'outil. Réponds normalement.
 
-EXEMPLES D'UTILISATION DES OUTILS :
-- "Envoie un email à test@test.com" → utilise send_email
-- "Mon nom de famille est TALEB" → NE PAS utiliser d'outil, réponds normalement
-- "Cherche les dernières nouvelles sur l'IA" → utilise search_web
-- "Ajoute un événement demain à 10h" → utilise create_event
-- "Je m'appelle Fateh" → NE PAS utiliser d'outil, réponds normalement
-- "Quel est le nom de ma femme ?" → NE PAS utiliser d'outil, réponds normalement
+RÈGLES STRICTES POUR LES OUTILS :
+- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email", "envoie un mail", "écris un email", "send an email".
+- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous", "add an event".
+- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "search", "google".
+
+INTERDICTIONS ABSOLUES :
+- Si l'utilisateur dit "mon nom de famille est X" → NE PAS appeler d'outil.
+- Si l'utilisateur dit "je m'appelle X" → NE PAS appeler d'outil.
+- Si l'utilisateur dit "comment je m'appelle" → NE PAS appeler d'outil.
+- Ne mélange JAMAIS les langues.
+- N'utilise JAMAIS le darija.
 
 RÈGLE DES SECRETS :
 - Les SECRETS sont protégés. Ne les divulgue JAMAIS sans autorisation.
 - Pour autoriser la divulgation d'un secret, l'utilisateur doit dire "Scoop" dans sa demande.
-
-INTERDICTIONS :
-- Ne mélange JAMAIS les langues dans ta réponse.
-- N'utilise JAMAIS le darija.
 
 SUIVI DU FIL :
 - L'historique peut contenir plusieurs langues.
@@ -97,7 +102,7 @@ ${privateText}`;
                 type: "function",
                 function: {
                     name: "send_email",
-                    description: "Envoie un email",
+                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -113,7 +118,7 @@ ${privateText}`;
                 type: "function",
                 function: {
                     name: "create_event",
-                    description: "Crée un événement dans l'agenda",
+                    description: "Crée un événement dans l'agenda UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -129,7 +134,7 @@ ${privateText}`;
                 type: "function",
                 function: {
                     name: "search_web",
-                    description: "Cherche sur Internet",
+                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite de recherche.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -201,8 +206,6 @@ ${privateText}`;
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
-
-        await extractSecrets(message, botText, supabaseUrl, supabaseKey, hasMemoKeyword);
 
         return res.status(200).json({ reply: botText, lang: currentLang });
 
