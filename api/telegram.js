@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     const groqKey = process.env.GROQ_API_KEY;
     const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
-    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBmbWdrZHB2cXF2bHpub2dmdXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4ODE2ODIsImV4cCI6MjEwNDQ1NzY4Mn0.KAgI6CBPW9URVG0cf9qn2t2GHsgmZNCwymkuLVgojlE";
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
     let userText = null;
     let detectedLang = null;
