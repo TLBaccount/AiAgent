@@ -28,16 +28,10 @@ export default async function handler(req, res) {
     
     // 2. Si pas de préfixe et pas de forcedLang, on utilise la langue du dernier message
     if (!currentLang) {
-        const lastUserMsg = (history || []).filter(m => m.role === 'user').pop();
-        if (lastUserMsg) {
-            const lastContent = lastUserMsg.content;
-            if (/[\u0600-\u06FF]/.test(lastContent)) currentLang = 'ar';
-            else if (/[a-zA-Z]/.test(lastContent) && !/[éèêëàâäîïôöùûüç]/.test(lastContent)) currentLang = 'en';
-            else currentLang = 'fr';
-        } else {
-            currentLang = 'fr';
-        }
-    }
+    if (/[\u0600-\u06FF]/.test(message)) currentLang = 'ar';
+    else if (/[a-zA-Z]/.test(message) && !/[éèêëàâäîïôöùûüç]/.test(message)) currentLang = 'en';
+    else currentLang = 'fr';
+}
 
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
         if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
