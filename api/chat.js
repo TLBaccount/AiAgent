@@ -57,7 +57,7 @@ export default async function handler(req, res) {
         if (!apiKey) return res.status(500).json({ error: "Clé API Groq manquante" });
 
         // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
-        const debugResult = await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
+        await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -162,9 +162,6 @@ ${privateText}`;
         const data = await response.json();
         const responseMessage = data.choices[0].message;
 
-        // DEBUG : Ajouter les infos de debug à la réponse
-        const debugString = `\n\n🔍 DEBUG: ${JSON.stringify(debugResult)}`;
-
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
@@ -192,7 +189,7 @@ ${privateText}`;
                 });
                 const apData = await apResponse.json();
                 return res.status(200).json({ 
-                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})` + debugString, 
+                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, 
                     lang: currentLang 
                 });
             }
@@ -203,7 +200,7 @@ ${privateText}`;
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
-        return res.status(200).json({ reply: botText + debugString, lang: currentLang });
+        return res.status(200).json({ reply: botText, lang: currentLang });
 
     } catch (error) {
         console.error("Erreur serveur:", error);
@@ -244,9 +241,7 @@ async function getSecrets(supabaseUrl, supabaseKey) {
 
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
-    let debugInfo = { step: "start" };
     try {
-        debugInfo.step = "fetch_groq";
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -271,24 +266,19 @@ Si rien : {"secrets": []}`
             })
         });
         
-        debugInfo.step = "parse_json";
         const data = await response.json();
         let content = data.choices[0].message.content.trim();
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) content = jsonMatch[0];
         
-        debugInfo.rawContent = content;
-        
         const parsed = JSON.parse(content);
         const secrets = parsed.secrets || [];
-        debugInfo.secrets = secrets;
         
-        debugInfo.step = "write_supabase";
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             
-            const writeResponse = await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+            await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
                 body: JSON.stringify({ 
@@ -298,12 +288,8 @@ Si rien : {"secrets": []}`
                     is_secret: finalIsSecret
                 })
             });
-            
-            debugInfo.supabaseStatus = writeResponse.status;
         }
-        debugInfo.step = "done";
     } catch (error) { 
-        debugInfo.error = error.message;
+        console.error("Erreur extraction secrets:", error.message); 
     }
-    return debugInfo;
 }
