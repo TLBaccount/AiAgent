@@ -240,7 +240,23 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             body: JSON.stringify({
                 model: "openai/gpt-oss-20b",
                 messages: [
-                    { role: "system", content: `Extrait les informations importantes. Réponds UNIQUEMENT en JSON : [{"key": "nom", "value": "Fateh", "is_secret": false}]. Si rien, réponds [].` },
+                    { 
+                        role: "system", 
+                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais UNIQUEMENT les informations personnelles importantes.
+
+RÈGLE DE CLASSIFICATION (TRÈS IMPORTANTE) :
+- Les informations NON-SECRÈTES (nom, prénom, préférences, habitudes, centres d'intérêt) → is_secret = false
+- Les informations SECRÈTES (email, mot de passe, adresse postale, numéro de téléphone, données bancaires, codes, identifiants) → is_secret = true
+
+EXEMPLES :
+- "Je m'appelle Fateh" → [{"key": "nom", "value": "Fateh", "is_secret": false}]
+- "Mon email est fateh@example.com" → [{"key": "email", "value": "fateh@example.com", "is_secret": true}]
+- "J'aime le café" → [{"key": "préférence", "value": "aime le café", "is_secret": false}]
+- "Mon mot de passe est 1234" → [{"key": "mot_de_passe", "value": "1234", "is_secret": true}]
+
+Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
+Si rien d'important, réponds exactement : []` 
+                    },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
             })
@@ -255,8 +271,15 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             await fetch(`${supabaseUrl}/rest/v1/secrets`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: "fateh", key: secret.key, value: secret.value, is_secret: secret.is_secret || false })
+                body: JSON.stringify({ 
+                    user_id: "fateh", 
+                    key: secret.key, 
+                    value: secret.value,
+                    is_secret: secret.is_secret || false
+                })
             });
         }
-    } catch (error) { console.error("Erreur extraction secrets:", error); }
+    } catch (error) { 
+        console.error("Erreur extraction secrets:", error); 
+    }
 }
