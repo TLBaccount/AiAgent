@@ -221,19 +221,12 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     } catch (error) { console.error("Erreur nettoyage:", error); }
 }
 
-async function getSecrets(supabaseUrl, supabaseKey) {
-    try {
-        const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        });
-        const data = await res.json();
-        return Array.isArray(data) ? data : [];
-    } catch (error) { return []; }
-}
-
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
+        // Détection du mot-clé "Memo"
+        const hasMemoKeyword = /\bmemo\b/i.test(message) || /\bmemo\b/i.test(botReply);
+        
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -242,17 +235,16 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
                 messages: [
                     { 
                         role: "system", 
-                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais UNIQUEMENT les informations personnelles importantes.
+                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
 
-RÈGLE DE CLASSIFICATION (TRÈS IMPORTANTE) :
-- Les informations NON-SECRÈTES (nom, prénom, préférences, habitudes, centres d'intérêt) → is_secret = false
-- Les informations SECRÈTES (email, mot de passe, adresse postale, numéro de téléphone, données bancaires, codes, identifiants) → is_secret = true
+RÈGLE DE CLASSIFICATION (ABSOLUE) :
+- Si le message contient le mot-clé "Memo", TOUTES les informations extraites de ce message sont classées comme SECRÈTES (is_secret = true).
+- Sinon, les informations extraites sont classées comme NON-SECRÈTES (is_secret = false), SAUF si elles sont intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN, données bancaires).
 
 EXEMPLES :
+- "Memo le nom de ma femme est Sarah" → [{"key": "nom_femme", "value": "Sarah", "is_secret": true}]
 - "Je m'appelle Fatah" → [{"key": "nom", "value": "Fatah", "is_secret": false}]
 - "Mon email est fatah@example.com" → [{"key": "email", "value": "fatah@example.com", "is_secret": true}]
-- "J'aime le café" → [{"key": "préférence", "value": "aime le café", "is_secret": false}]
-- "Mon mot de passe est 1234" → [{"key": "mot_de_passe", "value": "1234", "is_secret": true}]
 
 Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
 Si rien d'important, réponds exactement : []` 
