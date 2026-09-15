@@ -15,7 +15,7 @@ export default async function handler(req, res) {
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
     // ============================================
-    // DÉTECTION DE LA LANGUE (PAR PRÉFIXE OU MÉMORISATION)
+    // DÉTECTION DE LA LANGUE (fiable et simple)
     // ============================================
     let currentLang = forcedLang;
     
@@ -23,7 +23,6 @@ export default async function handler(req, res) {
     const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
     if (prefixMatch) {
         currentLang = prefixMatch[1].toLowerCase();
-        // On retire le préfixe du message
         message = message.replace(/^\[(fr|en|ar)\]\s*/i, '').trim();
     }
     
@@ -36,7 +35,7 @@ export default async function handler(req, res) {
             else if (/[a-zA-Z]/.test(lastContent) && !/[éèêëàâäîïôöùûüç]/.test(lastContent)) currentLang = 'en';
             else currentLang = 'fr';
         } else {
-            currentLang = 'fr'; // Par défaut
+            currentLang = 'fr';
         }
     }
 
@@ -47,38 +46,14 @@ export default async function handler(req, res) {
         }
     }
 
-    let activepiecesUrl = null;
-    let actionType = null;
-    if (/email|mail|e-mail/i.test(message)) { activepiecesUrl = URL_EMAIL; actionType = "email"; }
-    else if (/événement|agenda|rendez-vous|calendar|event/i.test(message)) { activepiecesUrl = URL_CALENDAR; actionType = "calendar"; }
-    else if (/cherche|recherche|search|google/i.test(message)) { activepiecesUrl = URL_SEARCH; actionType = "search"; }
-
-    if (activepiecesUrl) {
-        try {
-            const apResponse = await fetch(activepiecesUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: message, type: actionType, user: agentName })
-            });
-            if (!apResponse.ok) throw new Error(`Erreur Activepieces: ${apResponse.status}`);
-            const apData = await apResponse.json();
-            return res.status(200).json({ 
-                reply: `✅ Action "${actionType}" reçue par Activepieces ! (Réponse: ${JSON.stringify(apData)})`, 
-                lang: currentLang 
-            });
-        } catch (error) {
-            console.error("Erreur Activepieces:", error);
-            return res.status(200).json({ reply: `❌ Action impossible. (Erreur: ${error.message})`, lang: currentLang });
-        }
-    }
-
     const secrets = await getSecrets(supabaseUrl, supabaseKey);
     const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
     const privateSecrets = Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    const fullHistory = history || [];
+    // Limiter l'historique pour ne pas dépasser 12K TPM
+    const fullHistory = (history || []).slice(-20);
 
     try {
         const apiKey = process.env.GROQ_API_KEY;
@@ -86,9 +61,7 @@ export default async function handler(req, res) {
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
-INSTRUCTION DE LANGUE POUR CE MESSAGE UNIQUEMENT :
-Réponds dans la langue suivante : ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
-Cette instruction est valable UNIQUEMENT pour ce message. Ne l'applique pas aux messages suivants.
+RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
 INTERDICTIONS :
 - Ne mélange JAMAIS les langues dans ta réponse.
@@ -105,16 +78,68 @@ ${publicText}
 SECRETS (protégés par ton nom "Scoop") :
 ${privateText}`;
 
+        // Outils disponibles
+        const tools = [
+            {
+                type: "function",
+                function: {
+                    name: "send_email",
+                    description: "Envoie un email",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            to: { type: "string", description: "Destinataire" },
+                            subject: { type: "string", description: "Sujet" },
+                            body: { type: "string", description: "Corps du message" }
+                        },
+                        required: ["to", "subject", "body"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "create_event",
+                    description: "Crée un événement dans l'agenda",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            title: { type: "string", description: "Titre" },
+                            date: { type: "string", description: "Date (YYYY-MM-DD)" },
+                            time: { type: "string", description: "Heure (HH:MM)" }
+                        },
+                        required: ["title", "date", "time"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "search_web",
+                    description: "Cherche sur Internet",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: { type: "string", description: "Requête de recherche" }
+                        },
+                        required: ["query"]
+                    }
+                }
+            }
+        ];
+
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: "openai/gpt-oss-120b",
+                model: "llama-3.3-70b-versatile",
                 messages: [
                     { role: "system", content: systemPrompt },
                     ...fullHistory,
                     { role: "user", content: message }
-                ]
+                ],
+                tools: tools,
+                tool_choice: "auto"
             })
         });
 
@@ -124,16 +149,51 @@ ${privateText}`;
         }
 
         const data = await response.json();
-        let botText = data.choices[0].message.content.trim();
+        const responseMessage = data.choices[0].message;
 
-        let detectedLang = currentLang;
+        // Vérifier si l'IA veut appeler un outil
+        if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+            const toolCall = responseMessage.tool_calls[0];
+            const functionName = toolCall.function.name;
+            const functionArgs = JSON.parse(toolCall.function.arguments);
+
+            let activepiecesUrl = null;
+            let actionType = null;
+
+            if (functionName === "send_email") {
+                activepiecesUrl = URL_EMAIL;
+                actionType = "email";
+            } else if (functionName === "create_event") {
+                activepiecesUrl = URL_CALENDAR;
+                actionType = "calendar";
+            } else if (functionName === "search_web") {
+                activepiecesUrl = URL_SEARCH;
+                actionType = "search";
+            }
+
+            if (activepiecesUrl) {
+                const apResponse = await fetch(activepiecesUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: functionArgs, type: actionType, user: agentName })
+                });
+                const apData = await apResponse.json();
+                return res.status(200).json({ 
+                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, 
+                    lang: currentLang 
+                });
+            }
+        }
+
+        // Réponse normale
+        let botText = responseMessage.content.trim();
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
         await extractSecrets(message, botText, supabaseUrl, supabaseKey);
 
-        return res.status(200).json({ reply: botText, lang: detectedLang });
+        return res.status(200).json({ reply: botText, lang: currentLang });
 
     } catch (error) {
         console.error("Erreur serveur:", error);
@@ -151,7 +211,7 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
         const messages = await res.json();
         if (!Array.isArray(messages)) return;
         const totalTokens = messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
-        if (totalTokens > 8000 * 0.85) {
+        if (totalTokens > 12000 * 0.85) {
             const messagesToDelete = Math.floor(messages.length * 0.3);
             const idsToDelete = messages.slice(0, messagesToDelete).map(m => m.id);
             await fetch(`${supabaseUrl}/rest/v1/messages?id=in.(${idsToDelete.join(',')})`, {
@@ -179,7 +239,7 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
             body: JSON.stringify({
-                model: "openai/gpt-oss-120b",
+                model: "llama-3.3-70b-versatile",
                 messages: [
                     { role: "system", content: `Extrait les informations importantes. Réponds UNIQUEMENT en JSON : [{"key": "nom", "value": "Fateh", "is_secret": false}]. Si rien, réponds [].` },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
@@ -200,9 +260,4 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey) {
             });
         }
     } catch (error) { console.error("Erreur extraction secrets:", error); }
-}
-
-async function extractSecretsFromHistory(messages, supabaseUrl, supabaseKey) {
-    const conversation = messages.map(m => `${m.role}: ${m.content}`).join('\n');
-    await extractSecrets("Conversation ancienne", conversation, supabaseUrl, supabaseKey);
 }
