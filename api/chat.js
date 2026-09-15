@@ -278,7 +278,7 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
         
         // Chercher l'objet JSON {"secrets": [...]}
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const jsonMatch = content.match(/\{[\s\S]*\}/);  // ✅ Cherche un OBJET
         if (jsonMatch) content = jsonMatch[0];
         
         const parsed = JSON.parse(content);
