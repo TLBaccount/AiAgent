@@ -14,6 +14,32 @@ export default async function handler(req, res) {
 
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
+    // ============================================
+    // DÉTECTION DE LA LANGUE (PAR PRÉFIXE OU MÉMORISATION)
+    // ============================================
+    let currentLang = forcedLang;
+    
+    // 1. Chercher un préfixe [fr], [en], [ar] dans le message
+    const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
+    if (prefixMatch) {
+        currentLang = prefixMatch[1].toLowerCase();
+        // On retire le préfixe du message
+        message = message.replace(/^\[(fr|en|ar)\]\s*/i, '').trim();
+    }
+    
+    // 2. Si pas de préfixe et pas de forcedLang, on utilise la langue du dernier message
+    if (!currentLang) {
+        const lastUserMsg = (history || []).filter(m => m.role === 'user').pop();
+        if (lastUserMsg) {
+            const lastContent = lastUserMsg.content;
+            if (/[\u0600-\u06FF]/.test(lastContent)) currentLang = 'ar';
+            else if (/[a-zA-Z]/.test(lastContent) && !/[éèêëàâäîïôöùûüç]/.test(lastContent)) currentLang = 'en';
+            else currentLang = 'fr';
+        } else {
+            currentLang = 'fr'; // Par défaut
+        }
+    }
+
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
         if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -38,11 +64,11 @@ export default async function handler(req, res) {
             const apData = await apResponse.json();
             return res.status(200).json({ 
                 reply: `✅ Action "${actionType}" reçue par Activepieces ! (Réponse: ${JSON.stringify(apData)})`, 
-                lang: "fr" 
+                lang: currentLang 
             });
         } catch (error) {
             console.error("Erreur Activepieces:", error);
-            return res.status(200).json({ reply: `❌ Action impossible. (Erreur: ${error.message})`, lang: "fr" });
+            return res.status(200).json({ reply: `❌ Action impossible. (Erreur: ${error.message})`, lang: currentLang });
         }
     }
 
@@ -52,17 +78,6 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // ============================================
-    // DÉTECTION DE LANGUE PAR IA (fiable à 99,9%)
-    // ============================================
-    let currentLang = forcedLang;
-    if (!currentLang) {
-        currentLang = await detectLanguage(message, process.env.GROQ_API_KEY);
-    }
-
-    // ============================================
-    // HISTORIQUE COMPLET (SANS FILTRE, SANS LIMITE)
-    // ============================================
     const fullHistory = history || [];
 
     try {
@@ -71,18 +86,18 @@ export default async function handler(req, res) {
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
-RÈGLE ABSOLUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
+INSTRUCTION DE LANGUE POUR CE MESSAGE UNIQUEMENT :
+Réponds dans la langue suivante : ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
+Cette instruction est valable UNIQUEMENT pour ce message. Ne l'applique pas aux messages suivants.
 
-INTERDICTIONS TOTALES :
+INTERDICTIONS :
 - Ne mélange JAMAIS les langues dans ta réponse.
 - N'utilise JAMAIS le darija.
-- Ne réponds JAMAIS dans une langue différente de ${currentLang === 'ar' ? "l'ARABE" : currentLang === 'en' ? "l'ANGLAIS" : 'le FRANÇAIS'}.
 
 SUIVI DU FIL :
 - L'historique peut contenir plusieurs langues.
-- Tu dois tenir compte de TOUT l'historique, quelle que soit la langue.
-- Exemple : si l'utilisateur a dit "Je m'appelle Fateh" en français, et qu'il demande maintenant "What is my name?" en anglais, tu dois répondre "Your name is Fateh" en anglais.
-- Si l'information n'est pas dans l'historique, dis-le dans la langue demandée.
+- Tiens compte de TOUT l'historique.
+- Si on te demande une information, cherche dans l'historique.
 
 INFORMATIONS CONNUES :
 ${publicText}
@@ -123,35 +138,6 @@ ${privateText}`;
     } catch (error) {
         console.error("Erreur serveur:", error);
         return res.status(500).json({ error: "Erreur interne du serveur." });
-    }
-}
-
-// ============================================
-// FONCTION DE DÉTECTION DE LANGUE PAR IA
-// ============================================
-async function detectLanguage(text, groqKey) {
-    try {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
-            body: JSON.stringify({
-                model: "openai/gpt-oss-120b",
-                messages: [
-                    { role: "system", content: "Détecte la langue du texte suivant. Réponds UNIQUEMENT par 'fr', 'en' ou 'ar'. Rien d'autre." },
-                    { role: "user", content: text }
-                ],
-                max_tokens: 5
-            })
-        });
-        const data = await response.json();
-        const lang = data.choices[0].message.content.trim().toLowerCase();
-        if (lang.includes('fr') || lang.includes('french') || lang.includes('français')) return 'fr';
-        if (lang.includes('en') || lang.includes('english') || lang.includes('anglais')) return 'en';
-        if (lang.includes('ar') || lang.includes('arabic') || lang.includes('arabe')) return 'ar';
-        return 'fr';
-    } catch (error) {
-        console.error("Erreur détection langue:", error);
-        return 'fr';
     }
 }
 
