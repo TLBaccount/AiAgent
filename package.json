@@ -1,0 +1,7 @@
+{
+  "name": "aiagent",
+  "version": "1.0.0",
+  "dependencies": {
+    "franc": "^6.2.0"
+  }
+}
