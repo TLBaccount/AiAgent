@@ -254,22 +254,20 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
             body: JSON.stringify({
                 model: "openai/gpt-oss-20b",
-                messages: [
-                    { 
-                        role: "system", 
-                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
+                reasoning_effort: "low",
+                response_format: { type: "json_object" },
+                    messages: [
+                            { 
+                                role: "system", 
+                                content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
 
-RÈGLE DE CLASSIFICATION (ABSOLUE) :
-- Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
-- Sinon, les informations sont classées comme NON-SECRÈTES (is_secret = false), SAUF si elles sont intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN, données bancaires).
+                    RÈGLE DE CLASSIFICATION (ABSOLUE) :
+                    - Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
+                    - Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles (mot de passe, email, adresse, téléphone, IBAN).
 
-EXEMPLES :
-- "Memo le nom de ma femme est Sarah" → [{"key": "nom_femme", "value": "Sarah", "is_secret": true}]
-- "Je m'appelle Fateh" → [{"key": "nom", "value": "Fateh", "is_secret": false}]
-- "Mon email est fateh@example.com" → [{"key": "email", "value": "fateh@example.com", "is_secret": true}]
-
-Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sans backticks.
-Si rien d'important, réponds exactement : []` 
+                    Réponds UNIQUEMENT avec un objet JSON de cette forme exacte :
+                    {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
+                    Si rien d'important : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
@@ -280,7 +278,8 @@ Si rien d'important, réponds exactement : []`
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         if (jsonMatch) content = jsonMatch[0];
-        const secrets = JSON.parse(content);
+        const parsed = JSON.parse(content);
+        const secrets = parsed.secrets || [];
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             
