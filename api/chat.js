@@ -16,17 +16,13 @@ export default async function handler(req, res) {
 
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
-    // ============================================
     // DÉTECTION DE LA LANGUE
-    // ============================================
     let currentLang = forcedLang;
-    
     const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
     if (prefixMatch) {
         currentLang = prefixMatch[1].toLowerCase();
         message = message.replace(/^\[(fr|en|ar)\]\s*/i, '').trim();
     }
-    
     if (!currentLang) {
         if (/[\u0600-\u06FF]/.test(message)) {
             currentLang = 'ar';
@@ -37,9 +33,7 @@ export default async function handler(req, res) {
         }
     }
 
-    // ============================================
     // DÉTECTION DU MOT-CLÉ "MEMO"
-    // ============================================
     const hasMemoKeyword = /\bmemo\b/i.test(message);
     const cleanMessage = message.replace(/\bmemo\b/i, '').trim();
 
@@ -66,11 +60,22 @@ export default async function handler(req, res) {
 
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
+RÈGLE DES OUTILS (TRÈS IMPORTANTE) :
+- Tu as accès à 3 outils : send_email, create_event, search_web.
+- Tu ne dois appeler un outil QUE si l'utilisateur demande EXPLICITEMENT une action.
+- Si l'utilisateur parle de sa famille, de son nom, ou d'autre chose, tu NE DOIS PAS appeler d'outil. Réponds normalement.
+
+EXEMPLES D'UTILISATION DES OUTILS :
+- "Envoie un email à test@test.com" → utilise send_email
+- "Mon nom de famille est TALEB" → NE PAS utiliser d'outil, réponds normalement
+- "Cherche les dernières nouvelles sur l'IA" → utilise search_web
+- "Ajoute un événement demain à 10h" → utilise create_event
+- "Je m'appelle Fateh" → NE PAS utiliser d'outil, réponds normalement
+- "Quel est le nom de ma femme ?" → NE PAS utiliser d'outil, réponds normalement
+
 RÈGLE DES SECRETS :
 - Les SECRETS sont protégés. Ne les divulgue JAMAIS sans autorisation.
 - Pour autoriser la divulgation d'un secret, l'utilisateur doit dire "Scoop" dans sa demande.
-- Exemple : "Scoop, quel est le nom de ma femme ?" → autorisé.
-- Exemple : "Quel est le nom de ma femme ?" → refusé.
 
 INTERDICTIONS :
 - Ne mélange JAMAIS les langues dans ta réponse.
