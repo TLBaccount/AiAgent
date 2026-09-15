@@ -249,6 +249,10 @@ async function getSecrets(supabaseUrl, supabaseKey) {
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
+        console.log("=== EXTRACT SECRETS ===");
+        console.log("Message:", message);
+        console.log("ForceSecret:", forceSecret);
+        console.log("SupabaseKey présent:", !!supabaseKey);
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
@@ -297,6 +301,8 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                 })
             });
         }
+        console.log("Secrets extraits:", secrets);
+        console.log("=== FIN EXTRACT ===");
     } catch (error) { 
         console.error("Erreur extraction secrets:", error); 
     }
