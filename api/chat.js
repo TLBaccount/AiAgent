@@ -10,7 +10,6 @@ export default async function handler(req, res) {
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-    // Canal : "telegram" ou "web" (par défaut "web")
     const currentChannel = channel === "telegram" ? "telegram" : "web";
 
     const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
@@ -62,7 +61,7 @@ export default async function handler(req, res) {
         // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
         await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
 
-        // PROMPT SYSTÈME (ADAPTÉ AU CANAL)
+        // PROMPT SYSTÈME
         const formatRules = currentChannel === "telegram" 
             ? `
 RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
@@ -82,22 +81,19 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 - Reste clair et structuré.`;
 
         const dataShareRules = `
-RÈGLE DE PARTAGE DE DONNÉES (IMPORTANTE) :
-Quand l'utilisateur te demande des données (tableaux, graphiques, statistiques, listes), tu dois :
-1. Générer la donnée.
-2. Proposer le MEILLEUR outil pour la partager.
-3. Créer un lien court via api/shorten.js.
+RÈGLE DE PARTAGE DE DONNÉES :
+Quand l'utilisateur te demande des données (tableaux, graphiques, listes) :
+1. Génère la donnée.
+2. Propose le MEILLEUR outil pour la partager.
+3. Utilise l'outil shorten_url pour raccourcir le lien.
 
-OUTILS DISPONIBLES (choisis le meilleur selon le cas) :
-- 📊 **QuickChart** (https://quickchart.io/chart?c=...) : pour les graphiques (barres, camemberts, courbes).
-- 📋 **JSONBin** (https://jsonbin.io/) : pour les données brutes au format JSON.
-- 📈 **Datawrapper** (https://datawrapper.de/) : pour les visualisations interactives.
-- 📊 **Google Sheets** (https://sheets.google.com/) : pour les tableaux modifiables.
-- 📝 **Pastebin** (https://pastebin.com/) : pour le texte brut.
-- 🔗 **is.gd** (via api/shorten.js) : pour raccourcir n'importe quel lien.
+OUTILS DISPONIBLES :
+- 📊 QuickChart (https://quickchart.io/chart?c=...) : pour les graphiques (barres, camemberts, courbes). Pas de clé API.
+- 📋 JSONBin (https://api.jsonbin.io/v3/b) : pour les données JSON. Clé API requise.
+- 📝 Pastebin (https://pastebin.com/api) : pour le texte brut. Clé API requise.
 
-PROCÉDURE DE RACCOURCISSEMENT :
-Quand tu génères un lien long, appelle api/shorten.js avec POST {"url": "..."} pour obtenir un lien court.
+PROCÉDURE :
+Quand tu génères un lien long, appelle l'outil shorten_url avec l'URL longue.
 Affiche ensuite le lien court à l'utilisateur.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
@@ -105,18 +101,18 @@ Affiche ensuite le lien court à l'utilisateur.`;
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
 RÈGLE DES OUTILS (CRITIQUE) :
-- Tu as accès à 3 outils : send_email, create_event, search_web.
+- Tu as accès à 4 outils : send_email, create_event, search_web, shorten_url.
 - Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
 
 RÈGLES STRICTES POUR LES OUTILS :
 - send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X", "send an email to X".
 - create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous".
 - search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "google".
+- shorten_url : UNIQUEMENT quand tu génères un lien long (QuickChart, JSONBin, Pastebin).
 
 INTERDICTIONS ABSOLUES POUR LES OUTILS :
 - Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
 - Si l'utilisateur dit "mon email est X" → NE PAS appeler send_email.
-- Si l'utilisateur dit "j'ai un mail" → NE PAS appeler send_email.
 - Si l'utilisateur parle de sa famille, de son nom, de ses préférences → NE PAS appeler d'outil.
 - Ne mélange JAMAIS les langues.
 - N'utilise JAMAIS le darija.
@@ -187,7 +183,7 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "shorten_url",
-                    description: "Raccourcit une URL longue. Utilise cet outil quand tu génères un lien (QuickChart, JSONBin, Datawrapper, Google Sheets, etc.) pour obtenir un lien court.",
+                    description: "Raccourcit une URL longue. Utilise cet outil quand tu génères un lien (QuickChart, JSONBin, Pastebin) pour obtenir un lien court.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -366,13 +362,17 @@ RÈGLE DE CLASSIFICATION (ABSOLUE) :
 
 RÈGLE DES CLÉS (TRÈS IMPORTANTE - NE JAMAIS ÉCRASER) :
 - Chaque information doit avoir une clé UNIQUE et DESCRIPTIVE.
-- Pour les emails : email_outlook, email_gmail, email_pro, etc.
-- Pour les téléphones : tel_mobile, tel_fixe, tel_pro, etc.
-- Pour les adresses : adresse_domicile, adresse_bureau, etc.
-- Pour les noms : nom_famille, prenom, nom_complet (CE SONT 3 CLÉS DIFFÉRENTES).
+- Pour les téléphones : utilise TOUJOURS "tel_mobile" par défaut.
+  Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe".
+  Utilise des clés DESCRIPTIVES pour distinguer les personnes :
+  - tel_mobile_perso (votre numéro)
+  - tel_mobile_femme (numéro de votre femme)
+  - tel_mobile_ami_X (numéro d'un ami)
+- Pour les emails : email_perso, email_pro, email_femme, etc.
+- Pour les noms : nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
 - Exemple : si l'utilisateur donne son prénom PUIS son nom complet, tu dois créer prenom ET nom_complet (ne PAS écraser prenom).
 
-Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "nom_famille", "value": "TALEB", "is_secret": true}]}
+Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "tel_mobile_femme", "value": "+213784142001", "is_secret": true}]}
 Si rien : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
