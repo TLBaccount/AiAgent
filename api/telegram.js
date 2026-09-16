@@ -60,7 +60,7 @@ export default async function handler(req, res) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
                     chat_id: chatId, 
-                    text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"` 
+                    text: botReply, parse_mode: "Markdown" `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"` 
                 })
             });
         } else {
