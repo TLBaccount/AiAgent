@@ -52,7 +52,8 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    const fullHistory = (history || []).slice(-20);
+    // OPTIMISATION : Historique RÉDUIT pour éviter la répétition
+    const fullHistory = (history || []).slice(-5);
 
     try {
         // ============================================
@@ -70,31 +71,34 @@ RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
 - Utilise *gras*, _italique_, \`code\`.
 - Utilise des listes à puces avec "• ".
 - Utilise des emojis pour structurer : 📌, ✅, ❌, 📊, 🔗, 🎯.
-- Fais des sauts de ligne.
 - Reste concis et aéré.`
             : `
 RÈGLE DE FORMATAGE POUR LE WEB :
-- Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**), de l'italique (*).
+- Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**).
 - Utilise des listes à puces et des sauts de ligne.`;
 
         const dataShareRules = `
 RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
-- Si l'utilisateur demande un TABLEAU, un GRAPHIQUE, ou des DONNÉES :
-→ Utilise OBLIGATOIREMENT l'outil "share_data".
+- Si l'utilisateur demande un TABLEAU, GRAPHIQUE, ou DONNÉES :
+→ Utilise l'outil "share_data".
 - CHOISIS le format :
   1. GRAPHIQUE (bar/pie/line) : pour comparer, proportions, évolutions.
   2. JSON : pour les tableaux structurés.
   3. TEXTE : pour les notes.
 
-FORMAT "chart" :
-{"chartType": "bar", "labels": ["Jan"], "datasets": [{"label": "Ventes", "data": [10]}]}
-
-FORMAT "json" :
-{"headers": ["Col1", "Col2"], "rows": [["a", "b"]]}`;
+⚠️ IMPORTANT : Quand tu appelles "share_data", le système te renverra un lien.
+Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.
+NE JAMAIS écrire "[visualisation en ligne]" ou du texte inventé.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
 RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
+
+⚠️ RÈGLE ANTI-RÉPÉTITION (TRÈS IMPORTANTE) :
+- Tu ne dois JAMAIS répéter une réponse précédente.
+- Tu ne dois JAMAIS copier-coller un ancien message.
+- Tu dois répondre UNIQUEMENT à la demande ACTUELLE.
+- Si l'utilisateur demande un graphique, tu génères le graphique, tu ne répètes PAS la liste de courses précédente.
 
 RÈGLE DU MOT-CLÉ "MEMO" :
 - "Memo" = ENREGISTRER une information.
@@ -110,14 +114,12 @@ RÈGLE DES OUTILS :
 INTERDICTIONS :
 - "mon adresse mail est X" → NE PAS appeler send_email.
 - Ne mélange JAMAIS les langues.
+- N'invente JAMAIS de lien.
 
 RÈGLE DES SECRETS :
 - DONNE (avec "Memo") → ENREGISTRE.
 - DEMANDE (sans "Scoop") → REFUSE.
 - DEMANDE (avec "Scoop") → DONNE.
-
-SUIVI DU FIL :
-- Tiens compte de TOUT l'historique.
 
 INFORMATIONS (non-secrètes) :
 ${publicText}
@@ -135,13 +137,11 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        // ============================================
         // CASCADE : CEREBRAS → GROQ
-        // ============================================
         let response = null;
         let provider = null;
 
-        // --- TENTATIVE 1 : CEREBRAS ---
+        // TENTATIVE 1 : CEREBRAS
         const cerebrasKey = process.env.CEREBRAS_API_KEY;
         if (cerebrasKey) {
             try {
@@ -164,7 +164,7 @@ ${formatRules}`;
             } catch (e) { console.error("Erreur Cerebras:", e.message); }
         }
 
-        // --- TENTATIVE 2 : GROQ (fallback) ---
+        // TENTATIVE 2 : GROQ
         if (!provider) {
             const groqKey = process.env.GROQ_API_KEY;
             if (groqKey) {
@@ -196,9 +196,7 @@ ${formatRules}`;
         const data = await response.json();
         const responseMessage = data.choices[0].message;
 
-        // ============================================
         // GESTION DES OUTILS
-        // ============================================
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
@@ -230,7 +228,11 @@ ${formatRules}`;
                     });
                     const shortenData = await shortenRes.json();
                     const finalUrl = shortenData.short_url || shareData.share_url;
-                    return res.status(200).json({ reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, lang: currentLang });
+                    // LE LIEN EST FORCÉ DANS LA RÉPONSE
+                    return res.status(200).json({ 
+                        reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, 
+                        lang: currentLang 
+                    });
                 }
                 return res.status(200).json({ reply: `❌ Impossible de partager : ${shareData.error}`, lang: currentLang });
             }
@@ -249,10 +251,11 @@ ${formatRules}`;
                     body: JSON.stringify({ action: functionArgs, type: actionType, user: agentName })
                 });
                 const apData = await apResponse.json();
-                return res.status(200).json({ reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, lang: currentLang });
+                return res.status(200).json({ reply: `✅ Action "${actionType}" exécutée !`, lang: currentLang });
             }
         }
 
+        // RÉPONSE NORMALE
         let botText = responseMessage.content.trim();
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
