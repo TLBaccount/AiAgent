@@ -9,6 +9,7 @@ export default async function handler(req, res) {
     const agentName = "Scoop";
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
     const currentChannel = channel === "telegram" ? "telegram" : "web";
 
@@ -80,20 +81,26 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 - Reste clair et structuré.`;
 
         const dataShareRules = `
-RÈGLE DE PARTAGE DE DONNÉES :
-Quand l'utilisateur te demande des données (tableaux, graphiques, listes) :
-1. Génère la donnée.
-2. Propose le MEILLEUR outil pour la partager.
-3. Utilise l'outil shorten_url pour raccourcir le lien.
+RÈGLE DE PARTAGE DE DONNÉES (TRÈS IMPORTANTE) :
+Quand l'utilisateur te demande des données (tableaux, graphiques, listes, JSON), tu DOIS :
+1. Générer les données.
+2. Utiliser l'outil "share_data" avec le type approprié :
+   - type="chart" pour les graphiques (barres, camemberts, courbes).
+   - type="json" pour les données structurées (JSON).
+   - type="text" pour le texte brut (listes, notes).
+3. Afficher le lien court retourné.
 
-OUTILS DISPONIBLES :
-- 📊 QuickChart (https://quickchart.io/chart?c=...) : pour les graphiques (barres, camemberts, courbes). Pas de clé API.
-- 📋 JSONBin (https://api.jsonbin.io/v3/b) : pour les données JSON. Clé API requise.
-- 📝 Pastebin (https://pastebin.com/api) : pour le texte brut. Clé API requise.
+FORMAT DES DONNÉES POUR "chart" :
+{
+  "chartType": "bar" | "pie" | "line" | "doughnut",
+  "labels": ["Janvier", "Février", "Mars"],
+  "datasets": [{"label": "Ventes", "data": [10, 20, 30]}]
+}
 
-PROCÉDURE :
-Quand tu génères un lien long, appelle l'outil shorten_url avec l'URL longue.
-Affiche ensuite le lien court à l'utilisateur.`;
+EXEMPLES :
+- "Donne-moi un graphique des ventes par mois" → type="chart", chartType="bar", labels=["Jan","Fév","Mar"], datasets=[{label:"Ventes", data:[10,20,30]}]
+- "Donne-moi la liste des courses en JSON" → type="json", data={"courses":["pain","lait","œufs"]}
+- "Donne-moi mes notes en texte" → type="text", data={"content":"Note 1\nNote 2"}`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -107,34 +114,32 @@ RÈGLE DU MOT-CLÉ "MEMO" :
 - Tu ne dois JAMAIS refuser d'enregistrer une information donnée avec "Memo".
 
 RÈGLE DES OUTILS (CRITIQUE) :
-- Tu as accès à 4 outils : send_email, create_event, search_web, shorten_url.
+- Tu as accès à 5 outils : send_email, create_event, search_web, shorten_url, share_data.
 - Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
 
 RÈGLES STRICTES POUR LES OUTILS :
-- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X", "send an email to X".
-- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous".
-- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "google".
+- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X".
+- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement".
+- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche".
 - shorten_url : UNIQUEMENT quand tu génères un lien long.
+- share_data : UNIQUEMENT quand l'utilisateur demande un graphique, un JSON, ou un texte à partager.
 
 INTERDICTIONS ABSOLUES POUR LES OUTILS :
 - Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
-- Si l'utilisateur dit "mon email est X" → NE PAS appeler send_email.
-- Si l'utilisateur parle de sa famille, de son nom, de ses préférences → NE PAS appeler d'outil.
+- Si l'utilisateur parle de sa famille → NE PAS appeler d'outil.
 - Ne mélange JAMAIS les langues.
 - N'utilise JAMAIS le darija.
 
-RÈGLE DES SECRETS (TRÈS IMPORTANTE) :
+RÈGLE DES SECRETS :
 - Tu dois DISTINGUER deux situations :
   1. L'utilisateur DONNE une information (avec "Memo") → Tu l'ENREGISTRES et tu CONFIRMES.
   2. L'utilisateur DEMANDE une information secrète (sans "Scoop") → Tu REFUSES.
 - Si le message contient "Memo" → c'est une DONATION → tu confirmes.
 - Si le message ne contient PAS "Memo" et demande une info secrète → tu refuses.
-- Si l'utilisateur dit "Scoop, quel est mon numéro ?" → tu DONNES l'info.
 
 EXEMPLES DE RÉPONSES CORRECTES :
 - "Memo, mon numéro est +213553075066" → "✅ C'est noté, j'ai enregistré votre numéro."
-- "Memo, mon 2ème numéro est +213784221119" → "✅ C'est noté, j'ai enregistré votre 2ème numéro."
-- "Quel est mon numéro ?" → "🔒 Je ne peux pas divulguer cette information sans autorisation."
+- "Quel est mon numéro ?" → "🔒 Je ne peux pas divulguer cette information."
 - "Scoop, quel est mon numéro ?" → "📱 Votre numéro est +213553075066."
 
 SUIVI DU FIL :
@@ -153,7 +158,7 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "send_email",
-                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email à un destinataire.",
+                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -199,13 +204,29 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "shorten_url",
-                    description: "Raccourcit une URL longue. Utilise cet outil quand tu génères un lien (QuickChart, JSONBin, Pastebin) pour obtenir un lien court.",
+                    description: "Raccourcit une URL longue.",
                     parameters: {
                         type: "object",
                         properties: {
                             url: { type: "string", description: "URL longue à raccourcir" }
                         },
                         required: ["url"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "share_data",
+                    description: "Partage des données (graphique, JSON, texte) via un lien. Utilise cet outil quand l'utilisateur demande un graphique, un tableau, une liste, ou des données structurées.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            type: { type: "string", description: "Type de partage : 'chart', 'json', ou 'text'" },
+                            title: { type: "string", description: "Titre du partage" },
+                            data: { type: "object", description: "Données à partager (format dépend du type)" }
+                        },
+                        required: ["type", "data"]
                     }
                 }
             }
@@ -241,7 +262,7 @@ ${formatRules}`;
 
             // Cas spécial : shorten_url
             if (functionName === "shorten_url") {
-                const shortenRes = await fetch(`https://ai-agent-tlb-agent.vercel.app/api/shorten`, {
+                const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ url: functionArgs.url })
@@ -249,6 +270,38 @@ ${formatRules}`;
                 const shortenData = await shortenRes.json();
                 return res.status(200).json({ 
                     reply: `🔗 Lien court : ${shortenData.short_url}`, 
+                    lang: currentLang 
+                });
+            }
+
+            // Cas spécial : share_data
+            if (functionName === "share_data") {
+                const shareRes = await fetch(`${siteUrl}/api/share`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        type: functionArgs.type, 
+                        data: functionArgs.data,
+                        title: functionArgs.title || ""
+                    })
+                });
+                const shareData = await shareRes.json();
+
+                if (shareData.share_url) {
+                    const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: shareData.share_url })
+                    });
+                    const shortenData = await shortenRes.json();
+                    
+                    return res.status(200).json({ 
+                        reply: `🔗 Lien ${shareData.tool} : ${shortenData.short_url}`, 
+                        lang: currentLang 
+                    });
+                }
+                return res.status(200).json({ 
+                    reply: `❌ Impossible de partager les données : ${shareData.error}`, 
                     lang: currentLang 
                 });
             }
@@ -380,16 +433,12 @@ RÈGLE DE CLASSIFICATION (ABSOLUE) :
 RÈGLE DES NUMÉROS (TRÈS IMPORTANTE) :
 - Par défaut, TOUT numéro est un MOBILE → utilise "tel_mobile".
 - Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe".
-- Si l'utilisateur dit "mon 2ème numéro", "mon autre numéro", "mon nouveau numéro" → utilise une NOUVELLE clé (tel_mobile_perso_2, tel_mobile_perso_3, etc.) au lieu d'écraser l'ancienne.
+- Si l'utilisateur dit "mon 2ème numéro", "mon autre numéro" → utilise une NOUVELLE clé (tel_mobile_perso_2).
 
 RÈGLE DES CLÉS DESCRIPTIVES (NE JAMAIS ÉCRASER) :
-- Utilise des clés DESCRIPTIVES pour distinguer les personnes et les numéros multiples :
-  - tel_mobile_perso (1er numéro personnel)
-  - tel_mobile_perso_2 (2ème numéro personnel)
-  - tel_mobile_femme (numéro de votre femme)
-  - tel_mobile_ami_X (numéro d'un ami)
-- Pour les emails : email_perso, email_pro, email_femme, etc.
-- Pour les noms : nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
+- tel_mobile_perso, tel_mobile_perso_2, tel_mobile_femme, etc.
+- email_perso, email_pro, email_femme, etc.
+- nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
 
 Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "tel_mobile_perso_2", "value": "+213784221119", "is_secret": true}]}
 Si rien : {"secrets": []}`
