@@ -55,205 +55,155 @@ export default async function handler(req, res) {
     const fullHistory = (history || []).slice(-20);
 
     try {
-        const apiKey = process.env.GROQ_API_KEY;
-        if (!apiKey) return res.status(500).json({ error: "Clé API Groq manquante" });
-
-        // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
-        await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
+        // ============================================
+        // OPTIMISATION A : extractSecrets UNIQUEMENT si "Memo"
+        // ============================================
+        if (hasMemoKeyword) {
+            await extractSecrets(message, "", supabaseUrl, supabaseKey, true);
+        }
 
         // PROMPT SYSTÈME
         const formatRules = currentChannel === "telegram" 
             ? `
 RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
 - N'utilise JAMAIS de titres (###), de tableaux (| |), ni de HTML.
-- N'essaie JAMAIS de formater un tableau en texte : Telegram ne supporte PAS les tableaux.
-- Utilise *gras* pour les mots importants.
-- Utilise _italique_ pour les nuances.
-- Utilise \`code\` pour les données techniques (emails, URLs).
+- Utilise *gras*, _italique_, \`code\`.
 - Utilise des listes à puces avec "• ".
-- Utilise des séparateurs "━━━━━━━━━━" entre les sections.
-- Utilise des emojis pour structurer : 📌 (titre), ✅ (succès), ❌ (erreur), 📊 (données), 🔗 (lien), 🎯 (objectif).
-- Fais des sauts de ligne entre les paragraphes.
+- Utilise des emojis pour structurer : 📌, ✅, ❌, 📊, 🔗, 🎯.
+- Fais des sauts de ligne.
 - Reste concis et aéré.`
             : `
 RÈGLE DE FORMATAGE POUR LE WEB :
 - Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**), de l'italique (*).
-- Utilise des listes à puces et des sauts de ligne.
-- Reste clair et structuré.`;
+- Utilise des listes à puces et des sauts de ligne.`;
 
         const dataShareRules = `
 RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
-
-⚠️ Si l'utilisateur demande un TABLEAU, un GRAPHIQUE, une LISTE STRUCTURÉE, ou des DONNÉES :
-→ Tu DOIS OBLIGATOIREMENT utiliser l'outil "share_data".
-
-🎯 RÈGLE DE DÉCISION :
-
-1. 📊 GRAPHIQUE EN BARRES (type="chart", chartType="bar") : pour COMPARER.
-2. 🥧 CAMEMBERT (type="chart", chartType="pie") : pour les PROPORTIONS.
-3. 📈 COURBE (type="chart", chartType="line") : pour les ÉVOLUTIONS.
-4. 📋 TABLEAU JSON (type="json") : pour les données STRUCTURÉES.
-5. 📝 TEXTE BRUT (type="text") : pour les NOTES.
+- Si l'utilisateur demande un TABLEAU, un GRAPHIQUE, ou des DONNÉES :
+→ Utilise OBLIGATOIREMENT l'outil "share_data".
+- CHOISIS le format :
+  1. GRAPHIQUE (bar/pie/line) : pour comparer, proportions, évolutions.
+  2. JSON : pour les tableaux structurés.
+  3. TEXTE : pour les notes.
 
 FORMAT "chart" :
-{"chartType": "bar", "labels": ["Jan", "Fév"], "datasets": [{"label": "Ventes", "data": [10, 20]}]}
+{"chartType": "bar", "labels": ["Jan"], "datasets": [{"label": "Ventes", "data": [10]}]}
 
 FORMAT "json" :
-{"headers": ["Ingrédient", "Quantité"], "rows": [["Poulet", "500 g"]]}
-
-FORMAT "text" :
-{"content": "Note 1\nNote 2"}`;
+{"headers": ["Col1", "Col2"], "rows": [["a", "b"]]}`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
-RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
+RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
 RÈGLE DU MOT-CLÉ "MEMO" :
-- Le mot "Memo" est un mot-clé pour ENREGISTRER une information.
-- Tu ne dois JAMAIS répéter "Memo" dans ta réponse.
-- Si le message contient "Memo", tu CONFIRMES l'enregistrement ("✅ C'est noté...").
-- Tu ne dois JAMAIS refuser d'enregistrer une information donnée avec "Memo".
+- "Memo" = ENREGISTRER une information.
+- Ne répète JAMAIS "Memo".
+- Si "Memo" → CONFIRME l'enregistrement ("✅ C'est noté...").
 
-RÈGLE DES OUTILS (CRITIQUE) :
-- 5 outils : send_email, create_event, search_web, shorten_url, share_data.
-- Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE.
-
-RÈGLES STRICTES :
+RÈGLE DES OUTILS :
 - send_email : UNIQUEMENT si "envoie un email à X".
 - create_event : UNIQUEMENT si "ajoute un événement".
 - search_web : UNIQUEMENT si "cherche", "recherche".
-- shorten_url : UNIQUEMENT quand tu génères un lien long.
-- share_data : OBLIGATOIRE pour tableau/graphique/liste structurée.
+- share_data : OBLIGATOIRE pour tableau/graphique.
 
 INTERDICTIONS :
-- Si "mon adresse mail est X" → NE PAS appeler send_email.
+- "mon adresse mail est X" → NE PAS appeler send_email.
 - Ne mélange JAMAIS les langues.
-- N'utilise JAMAIS le darija.
 
 RÈGLE DES SECRETS :
-- DONNE une info (avec "Memo") → ENREGISTRE et CONFIRME.
-- DEMANDE une info secrète (sans "Scoop") → REFUSE.
-- DEMANDE avec "Scoop" → DONNE.
+- DONNE (avec "Memo") → ENREGISTRE.
+- DEMANDE (sans "Scoop") → REFUSE.
+- DEMANDE (avec "Scoop") → DONNE.
 
 SUIVI DU FIL :
 - Tiens compte de TOUT l'historique.
 
-INFORMATIONS CONNUES (non-secrètes) :
+INFORMATIONS (non-secrètes) :
 ${publicText}
 
-SECRETS (protégés par ton nom "Scoop") :
+SECRETS (protégés par "Scoop") :
 ${privateText}
 ${dataShareRules}
 ${formatRules}`;
 
         const tools = [
-            {
-                type: "function",
-                function: {
-                    name: "send_email",
-                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            to: { type: "string" },
-                            subject: { type: "string" },
-                            body: { type: "string" }
-                        },
-                        required: ["to", "subject", "body"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "create_event",
-                    description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            title: { type: "string" },
-                            date: { type: "string" },
-                            time: { type: "string" }
-                        },
-                        required: ["title", "date", "time"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "search_web",
-                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            query: { type: "string" }
-                        },
-                        required: ["query"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "shorten_url",
-                    description: "Raccourcit une URL longue.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            url: { type: "string" }
-                        },
-                        required: ["url"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "share_data",
-                    description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            type: { type: "string" },
-                            title: { type: "string" },
-                            data: { type: "object" }
-                        },
-                        required: ["type", "data"]
-                    }
-                }
-            }
+            { type: "function", function: { name: "send_email", description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } } },
+            { type: "function", function: { name: "create_event", description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: ["title", "date", "time"] } } },
+            { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+            { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
+            { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model: "openai/gpt-oss-20b",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...fullHistory,
-                    { role: "user", content: message }
-                ],
-                tools: tools,
-                tool_choice: "auto"
-            })
-        });
+        // ============================================
+        // CASCADE : CEREBRAS → GROQ
+        // ============================================
+        let response = null;
+        let provider = null;
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Erreur API Groq: ${response.status} - ${errorText}`);
+        // --- TENTATIVE 1 : CEREBRAS ---
+        const cerebrasKey = process.env.CEREBRAS_API_KEY;
+        if (cerebrasKey) {
+            try {
+                response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${cerebrasKey}` },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...fullHistory,
+                            { role: "user", content: message }
+                        ],
+                        tools: tools,
+                        tool_choice: "auto"
+                    })
+                });
+                if (response.ok) provider = "Cerebras";
+                else console.error("Cerebras a échoué:", response.status);
+            } catch (e) { console.error("Erreur Cerebras:", e.message); }
+        }
+
+        // --- TENTATIVE 2 : GROQ (fallback) ---
+        if (!provider) {
+            const groqKey = process.env.GROQ_API_KEY;
+            if (groqKey) {
+                try {
+                    response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
+                        body: JSON.stringify({
+                            model: "openai/gpt-oss-20b",
+                            messages: [
+                                { role: "system", content: systemPrompt },
+                                ...fullHistory,
+                                { role: "user", content: message }
+                            ],
+                            tools: tools,
+                            tool_choice: "auto"
+                        })
+                    });
+                    if (response.ok) provider = "Groq";
+                    else console.error("Groq a échoué:", response.status);
+                } catch (e) { console.error("Erreur Groq:", e.message); }
+            }
+        }
+
+        if (!provider) {
+            throw new Error("Aucun fournisseur LLM n'a répondu");
         }
 
         const data = await response.json();
         const responseMessage = data.choices[0].message;
 
+        // ============================================
+        // GESTION DES OUTILS
+        // ============================================
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
             const functionArgs = JSON.parse(toolCall.function.arguments);
 
-            // Cas spécial : shorten_url
             if (functionName === "shorten_url") {
                 const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
                     method: "POST",
@@ -261,27 +211,16 @@ ${formatRules}`;
                     body: JSON.stringify({ url: functionArgs.url })
                 });
                 const shortenData = await shortenRes.json();
-                return res.status(200).json({ 
-                    reply: `🔗 Lien court : ${shortenData.short_url}`, 
-                    lang: currentLang 
-                });
+                return res.status(200).json({ reply: `🔗 Lien court : ${shortenData.short_url}`, lang: currentLang });
             }
 
-            // Cas spécial : share_data (avec DEBUG)
             if (functionName === "share_data") {
                 const shareRes = await fetch(`${siteUrl}/api/share`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ 
-                        type: functionArgs.type, 
-                        data: functionArgs.data,
-                        title: functionArgs.title || ""
-                    })
+                    body: JSON.stringify({ type: functionArgs.type, data: functionArgs.data, title: functionArgs.title || "" })
                 });
                 const shareData = await shareRes.json();
-
-                // DEBUG
-                let debugInfo = { shareData };
 
                 if (shareData.share_url) {
                     const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
@@ -290,34 +229,18 @@ ${formatRules}`;
                         body: JSON.stringify({ url: shareData.share_url })
                     });
                     const shortenData = await shortenRes.json();
-                    
-                    debugInfo.shortenData = shortenData;
                     const finalUrl = shortenData.short_url || shareData.share_url;
-                    
-                    return res.status(200).json({ 
-                        reply: `🔗 Lien ${shareData.tool} : ${finalUrl}\n\n🔍 DEBUG: ${JSON.stringify(debugInfo)}`, 
-                        lang: currentLang 
-                    });
+                    return res.status(200).json({ reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, lang: currentLang });
                 }
-                return res.status(200).json({ 
-                    reply: `❌ Impossible de partager : ${shareData.error}\n\n🔍 DEBUG: ${JSON.stringify(debugInfo)}`, 
-                    lang: currentLang 
-                });
+                return res.status(200).json({ reply: `❌ Impossible de partager : ${shareData.error}`, lang: currentLang });
             }
 
             let activepiecesUrl = null;
             let actionType = null;
 
-            if (functionName === "send_email") {
-                activepiecesUrl = URL_EMAIL;
-                actionType = "email";
-            } else if (functionName === "create_event") {
-                activepiecesUrl = URL_CALENDAR;
-                actionType = "calendar";
-            } else if (functionName === "search_web") {
-                activepiecesUrl = URL_SEARCH;
-                actionType = "search";
-            }
+            if (functionName === "send_email") { activepiecesUrl = URL_EMAIL; actionType = "email"; }
+            else if (functionName === "create_event") { activepiecesUrl = URL_CALENDAR; actionType = "calendar"; }
+            else if (functionName === "search_web") { activepiecesUrl = URL_SEARCH; actionType = "search"; }
 
             if (activepiecesUrl) {
                 const apResponse = await fetch(activepiecesUrl, {
@@ -326,10 +249,7 @@ ${formatRules}`;
                     body: JSON.stringify({ action: functionArgs, type: actionType, user: agentName })
                 });
                 const apData = await apResponse.json();
-                return res.status(200).json({ 
-                    reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, 
-                    lang: currentLang 
-                });
+                return res.status(200).json({ reply: `✅ Action "${actionType}" exécutée ! (Réponse: ${JSON.stringify(apData)})`, lang: currentLang });
             }
         }
 
@@ -378,19 +298,15 @@ async function getSecrets(supabaseUrl, supabaseKey) {
     } catch (error) { return []; }
 }
 
-function isArabicScript(text) {
-    return /[\u0600-\u06FF]/.test(text);
-}
+function isArabicScript(text) { return /[\u0600-\u06FF]/.test(text); }
 
 async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecret) {
     const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
-
     const existingRes = await fetch(
         `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
         { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` } }
     );
     const existing = await existingRes.json();
-
     const match = Array.isArray(existing)
         ? existing.find(row => (isArabicScript(row.value) ? 'ar' : 'latin') === scriptOfNew)
         : null;
@@ -421,9 +337,7 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                 reasoning_effort: "low",
                 response_format: { type: "json_object" },
                 messages: [
-                    { 
-                        role: "system", 
-                        content: `Tu es un extracteur d'informations.
+                    { role: "system", content: `Tu es un extracteur d'informations.
 
 RÈGLE DE CLASSIFICATION :
 - Si "Memo" → SECRET (is_secret = true).
@@ -440,8 +354,7 @@ RÈGLE DES CLÉS DESCRIPTIVES :
 - nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
 
 Réponds en JSON : {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
-Si rien : {"secrets": []}`
-                    },
+Si rien : {"secrets": []}` },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
             })
