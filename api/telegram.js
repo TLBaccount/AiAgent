@@ -123,11 +123,8 @@ export default async function handler(req, res) {
                 const audioBuffer = await audioResponse.arrayBuffer();
                 const audioFormData = new FormData();
                 audioFormData.append('chat_id', chatId);
-                audioFormData.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.mp3');
-                await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
-                    method: 'POST',
-                    body: audioFormData
-                });
+                audioFormData.append('voice', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.ogg');
+await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: audioFormData });
             }
         }
 
