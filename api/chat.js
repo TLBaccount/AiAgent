@@ -238,7 +238,37 @@ async function getSecrets(supabaseUrl, supabaseKey) {
         return Array.isArray(data) ? data : [];
     } catch (error) { return []; }
 }
+function isArabicScript(text) {
+    return /[\u0600-\u06FF]/.test(text);
+}
 
+async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecret) {
+    const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
+
+    const existingRes = await fetch(
+        `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
+        { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` } }
+    );
+    const existing = await existingRes.json();
+
+    const match = Array.isArray(existing)
+        ? existing.find(row => (isArabicScript(row.value) ? 'ar' : 'latin') === scriptOfNew)
+        : null;
+
+    if (match) {
+        await fetch(`${supabaseUrl}/rest/v1/secrets?id=eq.${match.id}`, {
+            method: "PATCH",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value, is_secret: isSecret })
+        });
+    } else {
+        await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+            method: "POST",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: userId, key: key, value: value, is_secret: isSecret })
+        });
+    }
+}
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
@@ -276,19 +306,9 @@ Si rien : {"secrets": []}`
         const secrets = parsed.secrets || [];
         
         for (const secret of secrets) {
-            const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
-            
-            await fetch(`${supabaseUrl}/rest/v1/secrets`, {
-                method: "POST",
-                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    user_id: "fatah", 
-                    key: secret.key, 
-                    value: secret.value,
-                    is_secret: finalIsSecret
-                })
-            });
-        }
+    const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
+    await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
+}
     } catch (error) { 
         console.error("Erreur extraction secrets:", error.message); 
     }
