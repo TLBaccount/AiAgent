@@ -52,7 +52,7 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // HISTORIQUE COMPLET (20 messages, comme convenu)
+    // HISTORIQUE COMPLET (20 messages)
     const fullHistory = (history || []).slice(-20);
 
     try {
@@ -135,11 +135,13 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        // CASCADE : CEREBRAS → GROQ
+        // ============================================
+        // CASCADE : CEREBRAS → GROQ (corrigée)
+        // ============================================
         let response = null;
         let provider = null;
 
-        // TENTATIVE 1 : CEREBRAS
+        // TENTATIVE 1 : CEREBRAS (modèle qwen-3.8-27b)
         const cerebrasKey = process.env.CEREBRAS_API_KEY;
         if (cerebrasKey) {
             try {
@@ -147,7 +149,7 @@ ${formatRules}`;
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${cerebrasKey}` },
                     body: JSON.stringify({
-                        model: "llama-3.3-70b",
+                        model: "qwen-3.8-27b",
                         messages: [
                             { role: "system", content: systemPrompt },
                             ...fullHistory,
@@ -157,12 +159,20 @@ ${formatRules}`;
                         tool_choice: "auto"
                     })
                 });
-                if (response.ok) provider = "Cerebras";
-                else console.error("Cerebras a échoué:", response.status);
-            } catch (e) { console.error("Erreur Cerebras:", e.message); }
+                
+                if (response.ok) {
+                    provider = "Cerebras";
+                } else {
+                    console.error(`Cerebras a échoué (${response.status}) :`, await response.text());
+                    response = null;
+                }
+            } catch (e) { 
+                console.error("Erreur Cerebras:", e.message); 
+                response = null;
+            }
         }
 
-        // TENTATIVE 2 : GROQ
+        // TENTATIVE 2 : GROQ (fallback)
         if (!provider) {
             const groqKey = process.env.GROQ_API_KEY;
             if (groqKey) {
@@ -181,15 +191,25 @@ ${formatRules}`;
                             tool_choice: "auto"
                         })
                     });
-                    if (response.ok) provider = "Groq";
-                    else console.error("Groq a échoué:", response.status);
-                } catch (e) { console.error("Erreur Groq:", e.message); }
+                    
+                    if (response.ok) {
+                        provider = "Groq";
+                    } else {
+                        console.error(`Groq a échoué (${response.status}) :`, await response.text());
+                        response = null;
+                    }
+                } catch (e) { 
+                    console.error("Erreur Groq:", e.message); 
+                    response = null;
+                }
             }
         }
 
         if (!provider) {
             throw new Error("Aucun fournisseur LLM n'a répondu");
         }
+
+        console.log(`Réponse obtenue via ${provider}`);
 
         const data = await response.json();
         const responseMessage = data.choices[0].message;
@@ -226,7 +246,6 @@ ${formatRules}`;
                     });
                     const shortenData = await shortenRes.json();
                     const finalUrl = shortenData.short_url || shareData.share_url;
-                    // LIEN FORCÉ DANS LA RÉPONSE
                     return res.status(200).json({ 
                         reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, 
                         lang: currentLang 
@@ -377,4 +396,4 @@ Si rien : {"secrets": []}` },
     } catch (error) { 
         console.error("Erreur extraction secrets:", error.message); 
     }
-}
+                    }
