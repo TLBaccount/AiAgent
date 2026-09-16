@@ -85,7 +85,8 @@ export default async function handler(req, res) {
             body: JSON.stringify({ 
                 message: userText, 
                 history: history,
-                forcedLang: detectedLang
+                forcedLang: detectedLang,
+                channel: "telegram"
             })
         });
 
