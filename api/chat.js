@@ -37,10 +37,9 @@ export default async function handler(req, res) {
 
     // DÉTECTION DU MOT-CLÉ "MEMO"
     const hasMemoKeyword = /\bmemo\b/i.test(message);
-    const cleanMessage = message.replace(/\bmemo\b/i, '').trim();
 
-    if (cleanMessage.toLowerCase().includes(agentName.toLowerCase())) {
-        if (cleanMessage.toLowerCase().includes("quelle heure") || cleanMessage.toLowerCase().includes("what time") || cleanMessage.toLowerCase().includes("الساعة")) {
+    if (message.toLowerCase().includes(agentName.toLowerCase())) {
+        if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
             const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
             return res.status(200).json({ reply: `Il est actuellement ${heure}.`, lang: "fr" });
         }
@@ -100,6 +99,13 @@ Affiche ensuite le lien court à l'utilisateur.`;
 
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
+RÈGLE DU MOT-CLÉ "MEMO" :
+- Le mot "Memo" est un mot-clé technique utilisé par l'utilisateur pour ENREGISTRER une information.
+- Tu ne dois JAMAIS répéter le mot "Memo" dans ta réponse.
+- Si le message contient "Memo", cela signifie que l'utilisateur te DONNE une information à enregistrer.
+- Tu dois alors CONFIRMER l'enregistrement (par exemple : "✅ C'est noté, j'ai enregistré...").
+- Tu ne dois JAMAIS refuser d'enregistrer une information donnée avec "Memo".
+
 RÈGLE DES OUTILS (CRITIQUE) :
 - Tu as accès à 4 outils : send_email, create_event, search_web, shorten_url.
 - Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
@@ -108,7 +114,7 @@ RÈGLES STRICTES POUR LES OUTILS :
 - send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X", "send an email to X".
 - create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous".
 - search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "google".
-- shorten_url : UNIQUEMENT quand tu génères un lien long (QuickChart, JSONBin, Pastebin).
+- shorten_url : UNIQUEMENT quand tu génères un lien long.
 
 INTERDICTIONS ABSOLUES POUR LES OUTILS :
 - Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
@@ -119,14 +125,15 @@ INTERDICTIONS ABSOLUES POUR LES OUTILS :
 
 RÈGLE DES SECRETS (TRÈS IMPORTANTE) :
 - Tu dois DISTINGUER deux situations :
-  1. L'utilisateur DONNE une information (avec "Memo") → Tu l'ENREGISTRES et tu CONFIRMES ("✅ C'est noté, j'ai enregistré...").
+  1. L'utilisateur DONNE une information (avec "Memo") → Tu l'ENREGISTRES et tu CONFIRMES.
   2. L'utilisateur DEMANDE une information secrète (sans "Scoop") → Tu REFUSES.
-- Ne confonds JAMAIS les deux. Si l'utilisateur dit "Memo, mon numéro est X", il te DONNE l'info → tu l'enregistres et tu confirmes.
-- Si l'utilisateur dit "Quel est mon numéro ?" (sans "Scoop") → tu REFUSES.
+- Si le message contient "Memo" → c'est une DONATION → tu confirmes.
+- Si le message ne contient PAS "Memo" et demande une info secrète → tu refuses.
 - Si l'utilisateur dit "Scoop, quel est mon numéro ?" → tu DONNES l'info.
 
 EXEMPLES DE RÉPONSES CORRECTES :
 - "Memo, mon numéro est +213553075066" → "✅ C'est noté, j'ai enregistré votre numéro."
+- "Memo, mon 2ème numéro est +213784221119" → "✅ C'est noté, j'ai enregistré votre 2ème numéro."
 - "Quel est mon numéro ?" → "🔒 Je ne peux pas divulguer cette information sans autorisation."
 - "Scoop, quel est mon numéro ?" → "📱 Votre numéro est +213553075066."
 
@@ -212,7 +219,7 @@ ${formatRules}`;
                 messages: [
                     { role: "system", content: systemPrompt },
                     ...fullHistory,
-                    { role: "user", content: cleanMessage }
+                    { role: "user", content: message }
                 ],
                 tools: tools,
                 tool_choice: "auto"
@@ -277,6 +284,7 @@ ${formatRules}`;
         let botText = responseMessage.content.trim();
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+        botText = botText.replace(/\bmemo\b/gi, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
         return res.status(200).json({ reply: botText, lang: currentLang });
@@ -371,20 +379,19 @@ RÈGLE DE CLASSIFICATION (ABSOLUE) :
 
 RÈGLE DES NUMÉROS (TRÈS IMPORTANTE) :
 - Par défaut, TOUT numéro est un MOBILE → utilise "tel_mobile".
-- Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe", "téléphone fixe", "ligne fixe".
-- Si l'utilisateur dit juste "mon numéro", "mon téléphone", "mon portable" → "tel_mobile".
+- Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe".
+- Si l'utilisateur dit "mon 2ème numéro", "mon autre numéro", "mon nouveau numéro" → utilise une NOUVELLE clé (tel_mobile_perso_2, tel_mobile_perso_3, etc.) au lieu d'écraser l'ancienne.
 
 RÈGLE DES CLÉS DESCRIPTIVES (NE JAMAIS ÉCRASER) :
-- Utilise des clés DESCRIPTIVES pour distinguer les personnes :
-  - tel_mobile_perso (votre numéro)
+- Utilise des clés DESCRIPTIVES pour distinguer les personnes et les numéros multiples :
+  - tel_mobile_perso (1er numéro personnel)
+  - tel_mobile_perso_2 (2ème numéro personnel)
   - tel_mobile_femme (numéro de votre femme)
   - tel_mobile_ami_X (numéro d'un ami)
-  - tel_fixe_perso (votre fixe, si mentionné)
 - Pour les emails : email_perso, email_pro, email_femme, etc.
 - Pour les noms : nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
-- Exemple : si l'utilisateur donne son prénom PUIS son nom complet, tu dois créer prenom ET nom_complet (ne PAS écraser prenom).
 
-Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "tel_mobile_femme", "value": "+213784142001", "is_secret": true}]}
+Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "tel_mobile_perso_2", "value": "+213784221119", "is_secret": true}]}
 Si rien : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
