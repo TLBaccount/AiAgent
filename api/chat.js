@@ -66,6 +66,7 @@ export default async function handler(req, res) {
             ? `
 RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
 - N'utilise JAMAIS de titres (###), de tableaux (| |), ni de HTML.
+- N'essaie JAMAIS de formater un tableau en texte : Telegram ne supporte PAS les tableaux.
 - Utilise *gras* pour les mots importants.
 - Utilise _italique_ pour les nuances.
 - Utilise \`code\` pour les données techniques (emails, URLs).
@@ -81,14 +82,43 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 - Reste clair et structuré.`;
 
         const dataShareRules = `
-RÈGLE DE PARTAGE DE DONNÉES (TRÈS IMPORTANTE) :
-Quand l'utilisateur te demande des données (tableaux, graphiques, listes, JSON), tu DOIS :
-1. Générer les données.
-2. Utiliser l'outil "share_data" avec le type approprié :
-   - type="chart" pour les graphiques (barres, camemberts, courbes).
-   - type="json" pour les données structurées (JSON).
-   - type="text" pour le texte brut (listes, notes).
-3. Afficher le lien court retourné.
+RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
+
+⚠️ Si l'utilisateur demande un TABLEAU, un GRAPHIQUE, une LISTE STRUCTURÉE, ou des DONNÉES :
+→ Tu DOIS OBLIGATOIREMENT utiliser l'outil "share_data".
+→ Tu ne dois JAMAIS essayer de formater un tableau en texte.
+→ Tu ne dois JAMAIS dire "format tableau" ou "liste à deux colonnes".
+
+🎯 RÈGLE DE DÉCISION (COMMENT CHOISIR LE FORMAT) :
+
+Tu dois CHOISIR TOI-MÊME le meilleur format selon la nature des données :
+
+1. 📊 GRAPHIQUE EN BARRES (type="chart", chartType="bar") :
+   → Pour COMPARER des valeurs entre catégories.
+   → Exemples : ventes par mois, notes par matière, dépenses par catégorie.
+
+2. 🥧 CAMEMBERT (type="chart", chartType="pie" ou "doughnut") :
+   → Pour montrer des PROPORTIONS ou des POURCENTAGES.
+   → Exemples : répartition du budget, pourcentage de temps passé.
+
+3. 📈 COURBE (type="chart", chartType="line") :
+   → Pour montrer une ÉVOLUTION dans le temps.
+   → Exemples : évolution du poids, croissance, températures.
+
+4. 📋 TABLEAU JSON (type="json") :
+   → Pour des données STRUCTURÉES avec plusieurs colonnes.
+   → Exemples : liste d'ingrédients avec quantités, contacts, planning.
+
+5. 📝 TEXTE BRUT (type="text") :
+   → Pour des NOTES, des listes simples, du texte long.
+   → Exemples : notes de réunion, résumés, poèmes.
+
+EXEMPLES DE DÉCISION :
+- "Ventes par mois" → chart (bar)
+- "Répartition du budget" → chart (pie)
+- "Évolution de mon poids" → chart (line)
+- "Liste des ingrédients" → json
+- "Mes notes" → text
 
 FORMAT DES DONNÉES POUR "chart" :
 {
@@ -97,10 +127,18 @@ FORMAT DES DONNÉES POUR "chart" :
   "datasets": [{"label": "Ventes", "data": [10, 20, 30]}]
 }
 
-EXEMPLES :
-- "Donne-moi un graphique des ventes par mois" → type="chart", chartType="bar", labels=["Jan","Fév","Mar"], datasets=[{label:"Ventes", data:[10,20,30]}]
-- "Donne-moi la liste des courses en JSON" → type="json", data={"courses":["pain","lait","œufs"]}
-- "Donne-moi mes notes en texte" → type="text", data={"content":"Note 1\nNote 2"}`;
+FORMAT DES DONNÉES POUR "json" :
+{
+  "headers": ["Ingrédient", "Quantité"],
+  "rows": [["Poulet", "500 g"], ["Crème fraîche", "200 ml"]]
+}
+
+FORMAT DES DONNÉES POUR "text" :
+{
+  "content": "Note 1\nNote 2"
+}
+
+RÈGLE FINALE : Tu CHOISIS le format. Si l'utilisateur dit "tableau", utilise json. Si l'utilisateur dit "graphique", utilise chart. Sinon, choisis selon la nature des données.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -122,7 +160,7 @@ RÈGLES STRICTES POUR LES OUTILS :
 - create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement".
 - search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche".
 - shorten_url : UNIQUEMENT quand tu génères un lien long.
-- share_data : UNIQUEMENT quand l'utilisateur demande un graphique, un JSON, ou un texte à partager.
+- share_data : OBLIGATOIRE dès que l'utilisateur demande un tableau, un graphique, ou une liste structurée.
 
 INTERDICTIONS ABSOLUES POUR LES OUTILS :
 - Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
@@ -218,13 +256,13 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "share_data",
-                    description: "Partage des données (graphique, JSON, texte) via un lien. Utilise cet outil quand l'utilisateur demande un graphique, un tableau, une liste, ou des données structurées.",
+                    description: "OBLIGATOIRE pour partager des données (tableau, graphique, liste structurée). Tu dois CHOISIR le meilleur format selon la nature des données.",
                     parameters: {
                         type: "object",
                         properties: {
-                            type: { type: "string", description: "Type de partage : 'chart', 'json', ou 'text'" },
+                            type: { type: "string", description: "Type : 'chart' (graphique), 'json' (tableau), ou 'text' (texte brut)" },
                             title: { type: "string", description: "Titre du partage" },
-                            data: { type: "object", description: "Données à partager (format dépend du type)" }
+                            data: { type: "object", description: "Données (format dépend du type)" }
                         },
                         required: ["type", "data"]
                     }
