@@ -5,10 +5,13 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { message, history, forcedLang } = req.body;
+    const { message, history, forcedLang, channel } = req.body;
     const agentName = "Scoop";
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+    // Canal : "telegram" ou "web" (par défaut "web")
+    const currentChannel = channel === "telegram" ? "telegram" : "web";
 
     const URL_CALENDAR = "https://cloud.activepieces.com/api/v1/webhooks/Qr8WabpLGVviCC1s6BLC9";
     const URL_EMAIL = "https://cloud.activepieces.com/api/v1/webhooks/w8ZXZlaQxhBQySnYAR0qH";
@@ -59,6 +62,44 @@ export default async function handler(req, res) {
         // EXTRACTION DES SECRETS (AVANT LE TOOL CALLING)
         await extractSecrets(message, "", supabaseUrl, supabaseKey, hasMemoKeyword);
 
+        // PROMPT SYSTÈME (ADAPTÉ AU CANAL)
+        const formatRules = currentChannel === "telegram" 
+            ? `
+RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
+- N'utilise JAMAIS de titres (###), de tableaux (| |), ni de HTML.
+- Utilise *gras* pour les mots importants.
+- Utilise _italique_ pour les nuances.
+- Utilise \`code\` pour les données techniques (emails, URLs).
+- Utilise des listes à puces avec "• ".
+- Utilise des séparateurs "━━━━━━━━━━" entre les sections.
+- Utilise des emojis pour structurer : 📌 (titre), ✅ (succès), ❌ (erreur), 📊 (données), 🔗 (lien), 🎯 (objectif).
+- Fais des sauts de ligne entre les paragraphes.
+- Reste concis et aéré.`
+            : `
+RÈGLE DE FORMATAGE POUR LE WEB :
+- Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**), de l'italique (*).
+- Utilise des listes à puces et des sauts de ligne.
+- Reste clair et structuré.`;
+
+        const dataShareRules = `
+RÈGLE DE PARTAGE DE DONNÉES (IMPORTANTE) :
+Quand l'utilisateur te demande des données (tableaux, graphiques, statistiques, listes), tu dois :
+1. Générer la donnée.
+2. Proposer le MEILLEUR outil pour la partager.
+3. Créer un lien court via api/shorten.js.
+
+OUTILS DISPONIBLES (choisis le meilleur selon le cas) :
+- 📊 **QuickChart** (https://quickchart.io/chart?c=...) : pour les graphiques (barres, camemberts, courbes).
+- 📋 **JSONBin** (https://jsonbin.io/) : pour les données brutes au format JSON.
+- 📈 **Datawrapper** (https://datawrapper.de/) : pour les visualisations interactives.
+- 📊 **Google Sheets** (https://sheets.google.com/) : pour les tableaux modifiables.
+- 📝 **Pastebin** (https://pastebin.com/) : pour le texte brut.
+- 🔗 **is.gd** (via api/shorten.js) : pour raccourcir n'importe quel lien.
+
+PROCÉDURE DE RACCOURCISSEMENT :
+Quand tu génères un lien long, appelle api/shorten.js avec POST {"url": "..."} pour obtenir un lien court.
+Affiche ensuite le lien court à l'utilisateur.`;
+
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
@@ -68,11 +109,14 @@ RÈGLE DES OUTILS (CRITIQUE) :
 - Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
 
 RÈGLES STRICTES POUR LES OUTILS :
-- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email", "envoie un mail", "send an email".
-- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous", "add an event".
-- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "search", "google".
+- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X", "send an email to X".
+- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement", "crée un rendez-vous".
+- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche", "google".
 
-INTERDICTIONS ABSOLUES :
+INTERDICTIONS ABSOLUES POUR LES OUTILS :
+- Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
+- Si l'utilisateur dit "mon email est X" → NE PAS appeler send_email.
+- Si l'utilisateur dit "j'ai un mail" → NE PAS appeler send_email.
 - Si l'utilisateur parle de sa famille, de son nom, de ses préférences → NE PAS appeler d'outil.
 - Ne mélange JAMAIS les langues.
 - N'utilise JAMAIS le darija.
@@ -89,18 +133,15 @@ ${publicText}
 
 SECRETS (protégés par ton nom "Scoop") :
 ${privateText}
-
-RÈGLE DE FORMATAGE :
-- N'utilise JAMAIS de titres (###) ni de tableaux (| |) dans tes réponses.
-- Utilise uniquement du texte simple, des **mots en gras**, et des listes à tirets courtes.
-- Reste concis et conversationnel, comme dans une vraie discussion.`;
+${dataShareRules}
+${formatRules}`;
 
         const tools = [
             {
                 type: "function",
                 function: {
                     name: "send_email",
-                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.",
+                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email à un destinataire.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -132,13 +173,27 @@ RÈGLE DE FORMATAGE :
                 type: "function",
                 function: {
                     name: "search_web",
-                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.",
+                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite de recherche.",
                     parameters: {
                         type: "object",
                         properties: {
                             query: { type: "string", description: "Requête de recherche" }
                         },
                         required: ["query"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "shorten_url",
+                    description: "Raccourcit une URL longue. Utilise cet outil quand tu génères un lien (QuickChart, JSONBin, Datawrapper, Google Sheets, etc.) pour obtenir un lien court.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            url: { type: "string", description: "URL longue à raccourcir" }
+                        },
+                        required: ["url"]
                     }
                 }
             }
@@ -171,6 +226,20 @@ RÈGLE DE FORMATAGE :
             const toolCall = responseMessage.tool_calls[0];
             const functionName = toolCall.function.name;
             const functionArgs = JSON.parse(toolCall.function.arguments);
+
+            // Cas spécial : shorten_url
+            if (functionName === "shorten_url") {
+                const shortenRes = await fetch(`https://ai-agent-tlb-agent.vercel.app/api/shorten`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: functionArgs.url })
+                });
+                const shortenData = await shortenRes.json();
+                return res.status(200).json({ 
+                    reply: `🔗 Lien court : ${shortenData.short_url}`, 
+                    lang: currentLang 
+                });
+            }
 
             let activepiecesUrl = null;
             let actionType = null;
@@ -295,7 +364,15 @@ RÈGLE DE CLASSIFICATION (ABSOLUE) :
 - Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
 - Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles.
 
-Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
+RÈGLE DES CLÉS (TRÈS IMPORTANTE - NE JAMAIS ÉCRASER) :
+- Chaque information doit avoir une clé UNIQUE et DESCRIPTIVE.
+- Pour les emails : email_outlook, email_gmail, email_pro, etc.
+- Pour les téléphones : tel_mobile, tel_fixe, tel_pro, etc.
+- Pour les adresses : adresse_domicile, adresse_bureau, etc.
+- Pour les noms : nom_famille, prenom, nom_complet (CE SONT 3 CLÉS DIFFÉRENTES).
+- Exemple : si l'utilisateur donne son prénom PUIS son nom complet, tu dois créer prenom ET nom_complet (ne PAS écraser prenom).
+
+Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "nom_famille", "value": "TALEB", "is_secret": true}]}
 Si rien : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
