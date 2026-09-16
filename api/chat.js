@@ -86,79 +86,54 @@ RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
 
 ⚠️ Si l'utilisateur demande un TABLEAU, un GRAPHIQUE, une LISTE STRUCTURÉE, ou des DONNÉES :
 → Tu DOIS OBLIGATOIREMENT utiliser l'outil "share_data".
-→ Tu ne dois JAMAIS essayer de formater un tableau en texte.
 
-🎯 RÈGLE DE DÉCISION (COMMENT CHOISIR LE FORMAT) :
+🎯 RÈGLE DE DÉCISION :
 
-Tu dois CHOISIR TOI-MÊME le meilleur format selon la nature des données :
+1. 📊 GRAPHIQUE EN BARRES (type="chart", chartType="bar") : pour COMPARER.
+2. 🥧 CAMEMBERT (type="chart", chartType="pie") : pour les PROPORTIONS.
+3. 📈 COURBE (type="chart", chartType="line") : pour les ÉVOLUTIONS.
+4. 📋 TABLEAU JSON (type="json") : pour les données STRUCTURÉES.
+5. 📝 TEXTE BRUT (type="text") : pour les NOTES.
 
-1. 📊 GRAPHIQUE EN BARRES (type="chart", chartType="bar") :
-   → Pour COMPARER des valeurs entre catégories.
+FORMAT "chart" :
+{"chartType": "bar", "labels": ["Jan", "Fév"], "datasets": [{"label": "Ventes", "data": [10, 20]}]}
 
-2. 🥧 CAMEMBERT (type="chart", chartType="pie" ou "doughnut") :
-   → Pour montrer des PROPORTIONS ou des POURCENTAGES.
+FORMAT "json" :
+{"headers": ["Ingrédient", "Quantité"], "rows": [["Poulet", "500 g"]]}
 
-3. 📈 COURBE (type="chart", chartType="line") :
-   → Pour montrer une ÉVOLUTION dans le temps.
-
-4. 📋 TABLEAU JSON (type="json") :
-   → Pour des données STRUCTURÉES avec plusieurs colonnes.
-
-5. 📝 TEXTE BRUT (type="text") :
-   → Pour des NOTES, des listes simples.
-
-FORMAT DES DONNÉES POUR "chart" :
-{
-  "chartType": "bar" | "pie" | "line" | "doughnut",
-  "labels": ["Janvier", "Février", "Mars"],
-  "datasets": [{"label": "Ventes", "data": [10, 20, 30]}]
-}
-
-FORMAT DES DONNÉES POUR "json" :
-{
-  "headers": ["Ingrédient", "Quantité"],
-  "rows": [["Poulet", "500 g"], ["Crème fraîche", "200 ml"]]
-}
-
-FORMAT DES DONNÉES POUR "text" :
-{
-  "content": "Note 1\nNote 2"
-}`;
+FORMAT "text" :
+{"content": "Note 1\nNote 2"}`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
 RÈGLE ABSOLUE DE LANGUE : Tu dois répondre EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
 RÈGLE DU MOT-CLÉ "MEMO" :
-- Le mot "Memo" est un mot-clé technique utilisé par l'utilisateur pour ENREGISTRER une information.
-- Tu ne dois JAMAIS répéter le mot "Memo" dans ta réponse.
-- Si le message contient "Memo", cela signifie que l'utilisateur te DONNE une information à enregistrer.
-- Tu dois alors CONFIRMER l'enregistrement (par exemple : "✅ C'est noté, j'ai enregistré...").
+- Le mot "Memo" est un mot-clé pour ENREGISTRER une information.
+- Tu ne dois JAMAIS répéter "Memo" dans ta réponse.
+- Si le message contient "Memo", tu CONFIRMES l'enregistrement ("✅ C'est noté...").
 - Tu ne dois JAMAIS refuser d'enregistrer une information donnée avec "Memo".
 
 RÈGLE DES OUTILS (CRITIQUE) :
-- Tu as accès à 5 outils : send_email, create_event, search_web, shorten_url, share_data.
-- Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE d'action.
+- 5 outils : send_email, create_event, search_web, shorten_url, share_data.
+- Tu ne dois appeler un outil QUE si l'utilisateur donne un ORDRE EXPLICITE.
 
-RÈGLES STRICTES POUR LES OUTILS :
-- send_email : UNIQUEMENT si l'utilisateur dit "envoie un email à X".
-- create_event : UNIQUEMENT si l'utilisateur dit "ajoute un événement".
-- search_web : UNIQUEMENT si l'utilisateur dit "cherche", "recherche".
+RÈGLES STRICTES :
+- send_email : UNIQUEMENT si "envoie un email à X".
+- create_event : UNIQUEMENT si "ajoute un événement".
+- search_web : UNIQUEMENT si "cherche", "recherche".
 - shorten_url : UNIQUEMENT quand tu génères un lien long.
-- share_data : OBLIGATOIRE dès que l'utilisateur demande un tableau, un graphique, ou une liste structurée.
+- share_data : OBLIGATOIRE pour tableau/graphique/liste structurée.
 
-INTERDICTIONS ABSOLUES POUR LES OUTILS :
-- Si l'utilisateur dit "mon adresse mail est X" → NE PAS appeler send_email.
-- Si l'utilisateur parle de sa famille → NE PAS appeler d'outil.
+INTERDICTIONS :
+- Si "mon adresse mail est X" → NE PAS appeler send_email.
 - Ne mélange JAMAIS les langues.
 - N'utilise JAMAIS le darija.
 
 RÈGLE DES SECRETS :
-- Tu dois DISTINGUER deux situations :
-  1. L'utilisateur DONNE une information (avec "Memo") → Tu l'ENREGISTRES et tu CONFIRMES.
-  2. L'utilisateur DEMANDE une information secrète (sans "Scoop") → Tu REFUSES.
-- Si le message contient "Memo" → c'est une DONATION → tu confirmes.
-- Si le message ne contient PAS "Memo" et demande une info secrète → tu refuses.
+- DONNE une info (avec "Memo") → ENREGISTRE et CONFIRME.
+- DEMANDE une info secrète (sans "Scoop") → REFUSE.
+- DEMANDE avec "Scoop" → DONNE.
 
 SUIVI DU FIL :
 - Tiens compte de TOUT l'historique.
@@ -176,13 +151,13 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "send_email",
-                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite d'envoi d'email.",
+                    description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
-                            to: { type: "string", description: "Destinataire" },
-                            subject: { type: "string", description: "Sujet" },
-                            body: { type: "string", description: "Corps du message" }
+                            to: { type: "string" },
+                            subject: { type: "string" },
+                            body: { type: "string" }
                         },
                         required: ["to", "subject", "body"]
                     }
@@ -192,13 +167,13 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "create_event",
-                    description: "Crée un événement dans l'agenda UNIQUEMENT si l'utilisateur donne un ordre explicite.",
+                    description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
-                            title: { type: "string", description: "Titre" },
-                            date: { type: "string", description: "Date (YYYY-MM-DD)" },
-                            time: { type: "string", description: "Heure (HH:MM)" }
+                            title: { type: "string" },
+                            date: { type: "string" },
+                            time: { type: "string" }
                         },
                         required: ["title", "date", "time"]
                     }
@@ -208,11 +183,11 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "search_web",
-                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite de recherche.",
+                    description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.",
                     parameters: {
                         type: "object",
                         properties: {
-                            query: { type: "string", description: "Requête de recherche" }
+                            query: { type: "string" }
                         },
                         required: ["query"]
                     }
@@ -226,7 +201,7 @@ ${formatRules}`;
                     parameters: {
                         type: "object",
                         properties: {
-                            url: { type: "string", description: "URL longue à raccourcir" }
+                            url: { type: "string" }
                         },
                         required: ["url"]
                     }
@@ -236,13 +211,13 @@ ${formatRules}`;
                 type: "function",
                 function: {
                     name: "share_data",
-                    description: "OBLIGATOIRE pour partager des données (tableau, graphique, liste structurée). Tu dois CHOISIR le meilleur format selon la nature des données.",
+                    description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.",
                     parameters: {
                         type: "object",
                         properties: {
-                            type: { type: "string", description: "Type : 'chart' (graphique), 'json' (tableau), ou 'text' (texte brut)" },
-                            title: { type: "string", description: "Titre du partage" },
-                            data: { type: "object", description: "Données (format dépend du type)" }
+                            type: { type: "string" },
+                            title: { type: "string" },
+                            data: { type: "object" }
                         },
                         required: ["type", "data"]
                     }
@@ -292,7 +267,7 @@ ${formatRules}`;
                 });
             }
 
-            // Cas spécial : share_data
+            // Cas spécial : share_data (avec DEBUG)
             if (functionName === "share_data") {
                 const shareRes = await fetch(`${siteUrl}/api/share`, {
                     method: "POST",
@@ -305,8 +280,10 @@ ${formatRules}`;
                 });
                 const shareData = await shareRes.json();
 
+                // DEBUG
+                let debugInfo = { shareData };
+
                 if (shareData.share_url) {
-                    // TOUJOURS raccourcir le lien
                     const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -314,15 +291,16 @@ ${formatRules}`;
                     });
                     const shortenData = await shortenRes.json();
                     
+                    debugInfo.shortenData = shortenData;
                     const finalUrl = shortenData.short_url || shareData.share_url;
                     
                     return res.status(200).json({ 
-                        reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, 
+                        reply: `🔗 Lien ${shareData.tool} : ${finalUrl}\n\n🔍 DEBUG: ${JSON.stringify(debugInfo)}`, 
                         lang: currentLang 
                     });
                 }
                 return res.status(200).json({ 
-                    reply: `❌ Impossible de partager les données : ${shareData.error}`, 
+                    reply: `❌ Impossible de partager : ${shareData.error}\n\n🔍 DEBUG: ${JSON.stringify(debugInfo)}`, 
                     lang: currentLang 
                 });
             }
@@ -445,23 +423,23 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                 messages: [
                     { 
                         role: "system", 
-                        content: `Tu es un extracteur d'informations. Analyse l'échange et extrais les informations personnelles importantes.
+                        content: `Tu es un extracteur d'informations.
 
-RÈGLE DE CLASSIFICATION (ABSOLUE) :
-- Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
-- Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles.
+RÈGLE DE CLASSIFICATION :
+- Si "Memo" → SECRET (is_secret = true).
+- Sinon → NON-SECRET (is_secret = false), SAUF si intrinsèquement sensible.
 
-RÈGLE DES NUMÉROS (TRÈS IMPORTANTE) :
-- Par défaut, TOUT numéro est un MOBILE → utilise "tel_mobile".
-- Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe".
-- Si l'utilisateur dit "mon 2ème numéro", "mon autre numéro" → utilise une NOUVELLE clé (tel_mobile_perso_2).
+RÈGLE DES NUMÉROS :
+- Par défaut, MOBILE → "tel_mobile".
+- "fixe" explicite → "tel_fixe".
+- "2ème numéro" → nouvelle clé (tel_mobile_perso_2).
 
-RÈGLE DES CLÉS DESCRIPTIVES (NE JAMAIS ÉCRASER) :
+RÈGLE DES CLÉS DESCRIPTIVES :
 - tel_mobile_perso, tel_mobile_perso_2, tel_mobile_femme, etc.
 - email_perso, email_pro, email_femme, etc.
 - nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
 
-Réponds UNIQUEMENT avec un objet JSON : {"secrets": [{"key": "tel_mobile_perso_2", "value": "+213784221119", "is_secret": true}]}
+Réponds en JSON : {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
 Si rien : {"secrets": []}`
                     },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
