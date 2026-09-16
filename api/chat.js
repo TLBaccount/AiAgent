@@ -88,12 +88,12 @@ INFORMATIONS CONNUES (non-secrètes) :
 ${publicText}
 
 SECRETS (protégés par ton nom "Scoop") :
-${privateText}`;
-        
+${privateText}
+
 RÈGLE DE FORMATAGE :
 - N'utilise JAMAIS de titres (###) ni de tableaux (| |) dans tes réponses.
 - Utilise uniquement du texte simple, des **mots en gras**, et des listes à tirets courtes.
-- Reste concis et conversationnel, comme dans une vraie discussion.
+- Reste concis et conversationnel, comme dans une vraie discussion.`;
 
         const tools = [
             {
@@ -243,6 +243,7 @@ async function getSecrets(supabaseUrl, supabaseKey) {
         return Array.isArray(data) ? data : [];
     } catch (error) { return []; }
 }
+
 function isArabicScript(text) {
     return /[\u0600-\u06FF]/.test(text);
 }
@@ -274,6 +275,7 @@ async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecr
         });
     }
 }
+
 async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     try {
@@ -311,9 +313,9 @@ Si rien : {"secrets": []}`
         const secrets = parsed.secrets || [];
         
         for (const secret of secrets) {
-    const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
-    await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
-}
+            const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
+            await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
+        }
     } catch (error) { 
         console.error("Erreur extraction secrets:", error.message); 
     }
