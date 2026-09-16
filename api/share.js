@@ -1,3 +1,13 @@
+function sanitizeHeader(text) {
+    if (!text) return "Scoop Data";
+    return text
+        .replace(/[–—]/g, '-')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[^\x00-\x7F]/g, '')
+        .trim() || "Scoop Data";
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -47,7 +57,7 @@ export default async function handler(req, res) {
                 headers: {
                     "Content-Type": "application/json",
                     "X-Master-Key": jsonbinKey,
-                    "X-Bin-Name": title || "Scoop Data",
+                    "X-Bin-Name": sanitizeHeader(title),
                     "X-Bin-Private": "false"
                 },
                 body: JSON.stringify(data)
@@ -82,7 +92,7 @@ export default async function handler(req, res) {
             params.append('api_dev_key', pastebinKey);
             params.append('api_option', 'paste');
             params.append('api_paste_code', data.content || data);
-            params.append('api_paste_name', title || 'Scoop Data');
+            params.append('api_paste_name', sanitizeHeader(title));
             params.append('api_paste_format', 'text');
             params.append('api_paste_expire_date', '1W');
             params.append('api_paste_private', '0');
