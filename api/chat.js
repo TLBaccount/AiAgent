@@ -360,14 +360,18 @@ RÈGLE DE CLASSIFICATION (ABSOLUE) :
 - Si le message contient le mot-clé "Memo", TOUTES les informations extraites sont classées comme SECRÈTES (is_secret = true).
 - Sinon, NON-SECRÈTES (is_secret = false), SAUF si intrinsèquement sensibles.
 
-RÈGLE DES CLÉS (TRÈS IMPORTANTE - NE JAMAIS ÉCRASER) :
-- Chaque information doit avoir une clé UNIQUE et DESCRIPTIVE.
-- Pour les téléphones : utilise TOUJOURS "tel_mobile" par défaut.
-  Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe".
-  Utilise des clés DESCRIPTIVES pour distinguer les personnes :
+RÈGLE DES NUMÉROS (TRÈS IMPORTANTE) :
+- Par défaut, TOUT numéro est un MOBILE → utilise "tel_mobile".
+- Utilise "tel_fixe" UNIQUEMENT si l'utilisateur dit explicitement "fixe", "téléphone fixe", "ligne fixe".
+- Si l'utilisateur dit juste "mon numéro", "mon téléphone", "mon portable" → "tel_mobile".
+- Si l'utilisateur dit "mon numéro fixe" → "tel_fixe".
+
+RÈGLE DES CLÉS DESCRIPTIVES (NE JAMAIS ÉCRASER) :
+- Utilise des clés DESCRIPTIVES pour distinguer les personnes :
   - tel_mobile_perso (votre numéro)
   - tel_mobile_femme (numéro de votre femme)
   - tel_mobile_ami_X (numéro d'un ami)
+  - tel_fixe_perso (votre fixe, si mentionné)
 - Pour les emails : email_perso, email_pro, email_femme, etc.
 - Pour les noms : nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
 - Exemple : si l'utilisateur donne son prénom PUIS son nom complet, tu dois créer prenom ET nom_complet (ne PAS écraser prenom).
