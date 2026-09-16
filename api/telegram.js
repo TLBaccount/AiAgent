@@ -15,13 +15,13 @@ export default async function handler(req, res) {
 
     let userText = null;
     let detectedLang = null;
-    let isVoice = false; // <-- NOUVEAU
+    let isVoice = false;
 
     try {
         if (message.text) {
             userText = message.text;
         } else if (message.voice) {
-            isVoice = true; // <-- NOUVEAU
+            isVoice = true;
             const fileId = message.voice.file_id;
             const fileInfoRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
             const fileInfo = await fileInfoRes.json();
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
                     chat_id: chatId, 
-                    text: botReply, parse_mode: "Markdown" `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"` 
+                    text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"`
                 })
             });
         } else {
@@ -107,15 +107,19 @@ export default async function handler(req, res) {
             body: JSON.stringify({ role: "assistant", content: botReply })
         });
 
-        // Envoi de la réponse texte
+        // Envoi de la réponse texte (avec Markdown)
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: botReply })
+            body: JSON.stringify({ 
+                chat_id: chatId, 
+                text: botReply, 
+                parse_mode: "Markdown" 
+            })
         });
 
         // Envoi de la voix UNIQUEMENT si le message était vocal
-        if (isVoice) { // <-- CONDITION
+        if (isVoice) {
             const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
             const audioResponse = await fetch(ttsUrl);
             
@@ -124,7 +128,7 @@ export default async function handler(req, res) {
                 const audioFormData = new FormData();
                 audioFormData.append('chat_id', chatId);
                 audioFormData.append('voice', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.ogg');
-await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: audioFormData });
+                await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: audioFormData });
             }
         }
 
