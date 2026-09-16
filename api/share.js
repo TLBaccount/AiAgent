@@ -10,8 +10,6 @@ export default async function handler(req, res) {
         // 1. QUICKCHART (graphiques, sans clé API)
         // ============================================
         if (type === 'chart') {
-            // data doit être au format QuickChart :
-            // { type: 'bar', data: { labels: [...], datasets: [...] } }
             const chartConfig = {
                 type: data.chartType || 'bar',
                 data: {
@@ -49,7 +47,8 @@ export default async function handler(req, res) {
                 headers: {
                     "Content-Type": "application/json",
                     "X-Master-Key": jsonbinKey,
-                    "X-Bin-Name": title || "Scoop Data"
+                    "X-Bin-Name": title || "Scoop Data",
+                    "X-Bin-Private": "false"
                 },
                 body: JSON.stringify(data)
             });
@@ -60,7 +59,7 @@ export default async function handler(req, res) {
             }
 
             const result = await response.json();
-            const jsonbinUrl = `https://api.jsonbin.io/v3/b/${result.metadata.id}`;
+            const jsonbinUrl = `https://api.jsonbin.io/v3/b/${result.metadata.id}/latest`;
 
             return res.status(200).json({ 
                 share_url: jsonbinUrl, 
@@ -86,6 +85,7 @@ export default async function handler(req, res) {
             params.append('api_paste_name', title || 'Scoop Data');
             params.append('api_paste_format', 'text');
             params.append('api_paste_expire_date', '1W');
+            params.append('api_paste_private', '0');
 
             const response = await fetch("https://pastebin.com/api/api_post.php", {
                 method: "POST",
