@@ -89,6 +89,11 @@ ${publicText}
 
 SECRETS (protégés par ton nom "Scoop") :
 ${privateText}`;
+        
+RÈGLE DE FORMATAGE :
+- N'utilise JAMAIS de titres (###) ni de tableaux (| |) dans tes réponses.
+- Utilise uniquement du texte simple, des **mots en gras**, et des listes à tirets courtes.
+- Reste concis et conversationnel, comme dans une vraie discussion.
 
         const tools = [
             {
