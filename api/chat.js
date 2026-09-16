@@ -52,13 +52,11 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // OPTIMISATION : Historique RÉDUIT pour éviter la répétition
-    const fullHistory = (history || []).slice(-5);
+    // HISTORIQUE COMPLET (20 messages, comme convenu)
+    const fullHistory = (history || []).slice(-20);
 
     try {
-        // ============================================
         // OPTIMISATION A : extractSecrets UNIQUEMENT si "Memo"
-        // ============================================
         if (hasMemoKeyword) {
             await extractSecrets(message, "", supabaseUrl, supabaseKey, true);
         }
@@ -228,7 +226,7 @@ ${formatRules}`;
                     });
                     const shortenData = await shortenRes.json();
                     const finalUrl = shortenData.short_url || shareData.share_url;
-                    // LE LIEN EST FORCÉ DANS LA RÉPONSE
+                    // LIEN FORCÉ DANS LA RÉPONSE
                     return res.status(200).json({ 
                         reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, 
                         lang: currentLang 
