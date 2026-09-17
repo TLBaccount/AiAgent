@@ -36,8 +36,10 @@ export default async function handler(req, res) {
         }
     }
 
-    // DÉTECTION DU MOT-CLÉ "MEMO"
+    // DÉTECTION DES MOTS-CLÉS
     const hasMemoKeyword = /\bmemo\b/i.test(message);
+    const hasValKeyword = /\bval\b/i.test(message);
+    const shouldExtractSecrets = hasMemoKeyword || hasValKeyword;
 
     if (message.toLowerCase().includes(agentName.toLowerCase())) {
         if (message.toLowerCase().includes("quelle heure") || message.toLowerCase().includes("what time") || message.toLowerCase().includes("الساعة")) {
@@ -52,13 +54,13 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // HISTORIQUE COMPLET (20 messages)
     const fullHistory = (history || []).slice(-20);
 
     try {
-        // OPTIMISATION : extractSecrets UNIQUEMENT si "Memo"
-        if (hasMemoKeyword) {
-            await extractSecrets(message, "", supabaseUrl, supabaseKey, true);
+        // EXTRACTION DES SECRETS (UNIQUEMENT si Memo ou Val)
+        if (shouldExtractSecrets) {
+            const forceSecret = hasMemoKeyword ? true : false; // Memo = secret, Val = non-secret
+            await extractSecrets(message, "", supabaseUrl, supabaseKey, forceSecret);
         }
 
         // PROMPT SYSTÈME
@@ -95,10 +97,12 @@ RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'A
 - Tu ne dois JAMAIS répéter une réponse précédente.
 - Réponds UNIQUEMENT à la demande ACTUELLE.
 
-RÈGLE DU MOT-CLÉ "MEMO" :
-- "Memo" = ENREGISTRER une information.
-- Ne répète JAMAIS "Memo".
-- Si "Memo" → CONFIRME l'enregistrement ("✅ C'est noté...").
+RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
+- "Memo" = ENREGISTRER une information SECRÈTE (is_secret = true).
+- "Val" = ENREGISTRER une information PUBLIQUE (is_secret = false).
+- Si le message contient "Memo" → CONFIRME l'enregistrement ("✅ C'est noté, j'ai enregistré ce secret.").
+- Si le message contient "Val" → CONFIRME l'enregistrement ("✅ C'est noté, j'ai enregistré cette information.").
+- Ne répète JAMAIS "Memo" ni "Val" dans ta réponse.
 
 RÈGLE DES OUTILS :
 - send_email : UNIQUEMENT si "envoie un email à X".
@@ -112,7 +116,6 @@ INTERDICTIONS :
 - N'invente JAMAIS de lien.
 
 RÈGLE DES SECRETS :
-- DONNE (avec "Memo") → ENREGISTRE.
 - DEMANDE (sans "Scoop") → REFUSE.
 - DEMANDE (avec "Scoop") → DONNE.
 
@@ -132,13 +135,11 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        // ============================================
         // CASCADE : GEMINI → GROQ → MISTRAL → OPENROUTER
-        // ============================================
         let response = null;
         let provider = null;
 
-        // TENTATIVE 1 : GEMINI (Google AI Studio)
+        // TENTATIVE 1 : GEMINI
         const geminiKey = process.env.GOOGLE_AI_KEY;
         if (geminiKey) {
             try {
@@ -156,17 +157,9 @@ ${formatRules}`;
                         tool_choice: "auto"
                     })
                 });
-                
-                if (response.ok) {
-                    provider = "Gemini";
-                } else {
-                    console.error(`Gemini a échoué (${response.status})`);
-                    response = null;
-                }
-            } catch (e) { 
-                console.error("Erreur Gemini:", e.message); 
-                response = null;
-            }
+                if (response.ok) provider = "Gemini";
+                else { console.error(`Gemini a échoué (${response.status})`); response = null; }
+            } catch (e) { console.error("Erreur Gemini:", e.message); response = null; }
         }
 
         // TENTATIVE 2 : GROQ
@@ -188,17 +181,9 @@ ${formatRules}`;
                             tool_choice: "auto"
                         })
                     });
-                    
-                    if (response.ok) {
-                        provider = "Groq";
-                    } else {
-                        console.error(`Groq a échoué (${response.status})`);
-                        response = null;
-                    }
-                } catch (e) { 
-                    console.error("Erreur Groq:", e.message); 
-                    response = null;
-                }
+                    if (response.ok) provider = "Groq";
+                    else { console.error(`Groq a échoué (${response.status})`); response = null; }
+                } catch (e) { console.error("Erreur Groq:", e.message); response = null; }
             }
         }
 
@@ -221,17 +206,9 @@ ${formatRules}`;
                             tool_choice: "auto"
                         })
                     });
-                    
-                    if (response.ok) {
-                        provider = "Mistral";
-                    } else {
-                        console.error(`Mistral a échoué (${response.status})`);
-                        response = null;
-                    }
-                } catch (e) { 
-                    console.error("Erreur Mistral:", e.message); 
-                    response = null;
-                }
+                    if (response.ok) provider = "Mistral";
+                    else { console.error(`Mistral a échoué (${response.status})`); response = null; }
+                } catch (e) { console.error("Erreur Mistral:", e.message); response = null; }
             }
         }
 
@@ -254,24 +231,13 @@ ${formatRules}`;
                             tool_choice: "auto"
                         })
                     });
-                    
-                    if (response.ok) {
-                        provider = "OpenRouter";
-                    } else {
-                        console.error(`OpenRouter a échoué (${response.status})`);
-                        response = null;
-                    }
-                } catch (e) { 
-                    console.error("Erreur OpenRouter:", e.message); 
-                    response = null;
-                }
+                    if (response.ok) provider = "OpenRouter";
+                    else { console.error(`OpenRouter a échoué (${response.status})`); response = null; }
+                } catch (e) { console.error("Erreur OpenRouter:", e.message); response = null; }
             }
         }
 
-        if (!provider) {
-            throw new Error("Aucun fournisseur LLM n'a répondu");
-        }
-
+        if (!provider) throw new Error("Aucun fournisseur LLM n'a répondu");
         console.log(`Réponse obtenue via ${provider}`);
 
         const data = await response.json();
@@ -309,10 +275,7 @@ ${formatRules}`;
                     });
                     const shortenData = await shortenRes.json();
                     const finalUrl = shortenData.short_url || shareData.share_url;
-                    return res.status(200).json({ 
-                        reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, 
-                        lang: currentLang 
-                    });
+                    return res.status(200).json({ reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, lang: currentLang });
                 }
                 return res.status(200).json({ reply: `❌ Impossible de partager : ${shareData.error}`, lang: currentLang });
             }
@@ -340,6 +303,7 @@ ${formatRules}`;
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\bmemo\b/gi, "").trim();
+        botText = botText.replace(/\bval\b/gi, "").trim();
         botText = botText.replace(/\s+/g, " ").trim();
 
         return res.status(200).json({ reply: botText, lang: currentLang });
@@ -422,21 +386,32 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
                 messages: [
                     { role: "system", content: `Tu es un extracteur d'informations.
 
-RÈGLE DE CLASSIFICATION :
-- Si "Memo" → SECRET (is_secret = true).
-- Sinon → NON-SECRET (is_secret = false).
+RÈGLE ABSOLUE N°1 (DÉCLENCHEMENT) :
+- Si le message contient "Memo" → tu extrais les informations et tu les classes SECRÈTES (is_secret = true).
+- Si le message contient "Val" → tu extrais les informations et tu les classes PUBLIQUES (is_secret = false).
+- Si le message ne contient NI "Memo" NI "Val" → tu réponds {"secrets": []} (RIEN À ENREGISTRER).
 
-RÈGLE DES NUMÉROS :
-- Par défaut, MOBILE → "tel_mobile".
-- "fixe" explicite → "tel_fixe".
+RÈGLE ABSOLUE N°2 (CLÉS UNIQUES - NE JAMAIS ÉCRASER) :
+- Tu dois TOUJOURS utiliser des clés UNIQUES et DESCRIPTIVES.
+- Pour distinguer les personnes, utilise un suffixe :
+  - prenom_perso, prenom_femme, prenom_ami_X
+  - nom_famille_perso, nom_famille_femme
+  - email_perso, email_femme, email_pro
+  - tel_mobile_perso, tel_mobile_femme, tel_mobile_perso_2
+- NE JAMAIS utiliser une clé générique (prenom, email, tel) si elle peut être ambiguë.
+
+RÈGLE ABSOLUE N°3 (NUMÉROS) :
+- Par défaut, MOBILE → "tel_mobile_XXX".
+- "fixe" explicite → "tel_fixe_XXX".
 - "2ème numéro" → nouvelle clé (tel_mobile_perso_2).
 
-RÈGLE DES CLÉS DESCRIPTIVES :
-- tel_mobile_perso, tel_mobile_perso_2, tel_mobile_femme, etc.
-- email_perso, email_pro, email_femme, etc.
-- nom_famille, prenom, nom_complet (3 clés DIFFÉRENTES).
+EXEMPLES :
+- "Memo, je m'appelle Fateh" → [{"key": "prenom_perso", "value": "Fateh", "is_secret": true}]
+- "Memo, le prénom de ma femme est SOUAD" → [{"key": "prenom_femme", "value": "SOUAD", "is_secret": true}]
+- "Val, mon email est f@t.com" → [{"key": "email_perso", "value": "f@t.com", "is_secret": false}]
+- "Bonjour" → {"secrets": []}
 
-Réponds en JSON : {"secrets": [{"key": "nom", "value": "Fateh", "is_secret": false}]}
+Réponds en JSON : {"secrets": [...]}
 Si rien : {"secrets": []}` },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
@@ -453,6 +428,7 @@ Si rien : {"secrets": []}` },
         const secrets = parsed.secrets || [];
         
         for (const secret of secrets) {
+            // Le mot-clé force le secret (Memo=true) ou public (Val=false)
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
         }
