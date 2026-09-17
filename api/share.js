@@ -8,6 +8,26 @@ function sanitizeHeader(text) {
         .trim() || "Scoop Data";
 }
 
+function jsonToHtmlTable(data, title) {
+    let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>`;
+    html += `<style>body{font-family:Arial,sans-serif;padding:20px;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #ddd;padding:8px;text-align:left;} th{background:#1e3c72;color:white;} tr:nth-child(even){background:#f2f2f2;}</style>`;
+    html += `</head><body><h2>${title}</h2><table>`;
+    
+    if (data.headers && data.rows) {
+        html += '<thead><tr>';
+        data.headers.forEach(h => html += `<th>${h}</th>`);
+        html += '</tr></thead><tbody>';
+        data.rows.forEach(row => {
+            html += '<tr>';
+            row.forEach(cell => html += `<td>${cell}</td>`);
+            html += '</tr>';
+        });
+        html += '</tbody>';
+    }
+    html += '</table></body></html>';
+    return html;
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
@@ -16,42 +36,21 @@ export default async function handler(req, res) {
     const { type, data, title } = req.body;
 
     try {
-        // ============================================
-        // 1. QUICKCHART (graphiques, sans clé API)
-        // ============================================
         if (type === 'chart') {
             const chartConfig = {
                 type: data.chartType || 'bar',
-                data: {
-                    labels: data.labels || [],
-                    datasets: data.datasets || []
-                },
-                options: {
-                    title: {
-                        display: !!title,
-                        text: title || ''
-                    }
-                }
+                data: { labels: data.labels || [], datasets: data.datasets || [] },
+                options: { title: { display: !!title, text: title || '' } }
             };
-
             const chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}&w=600&h=400&backgroundColor=white`;
-            
-            return res.status(200).json({ 
-                share_url: chartUrl, 
-                type: 'chart',
-                tool: 'QuickChart'
-            });
+            return res.status(200).json({ share_url: chartUrl, type: 'chart', tool: 'QuickChart' });
         }
 
-        // ============================================
-        // 2. JSONBIN (données JSON, avec clé API)
-        // ============================================
         if (type === 'json') {
             const jsonbinKey = process.env.JSONBIN_API_KEY;
-            if (!jsonbinKey) {
-                throw new Error('Clé JSONBin manquante');
-            }
+            if (!jsonbinKey) throw new Error('Clé JSONBin manquante');
 
+            const htmlContent = jsonToHtmlTable(data, title || 'Tableau');
             const response = await fetch("https://api.jsonbin.io/v3/b", {
                 method: "POST",
                 headers: {
@@ -60,34 +59,16 @@ export default async function handler(req, res) {
                     "X-Bin-Name": sanitizeHeader(title),
                     "X-Bin-Private": "false"
                 },
-                body: JSON.stringify(data)
+                body: JSON.stringify({ html: htmlContent, data: data })
             });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Erreur JSONBin: ${response.status} - ${errorText}`);
-            }
-
             const result = await response.json();
             const jsonbinUrl = `https://api.jsonbin.io/v3/b/${result.metadata.id}/latest`;
-
-            return res.status(200).json({ 
-                share_url: jsonbinUrl, 
-                type: 'json',
-                tool: 'JSONBin',
-                bin_id: result.metadata.id
-            });
+            return res.status(200).json({ share_url: jsonbinUrl, type: 'json', tool: 'JSONBin' });
         }
 
-        // ============================================
-        // 3. PASTEBIN (texte brut, avec clé API)
-        // ============================================
         if (type === 'text') {
             const pastebinKey = process.env.PASTEBIN_API_KEY;
-            if (!pastebinKey) {
-                throw new Error('Clé Pastebin manquante');
-            }
-
+            if (!pastebinKey) throw new Error('Clé Pastebin manquante');
             const params = new URLSearchParams();
             params.append('api_dev_key', pastebinKey);
             params.append('api_option', 'paste');
@@ -96,28 +77,16 @@ export default async function handler(req, res) {
             params.append('api_paste_format', 'text');
             params.append('api_paste_expire_date', '1W');
             params.append('api_paste_private', '0');
-
             const response = await fetch("https://pastebin.com/api/api_post.php", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: params.toString()
             });
-
             const pastebinUrl = await response.text();
-
-            if (!pastebinUrl.startsWith('https://pastebin.com/')) {
-                throw new Error(`Erreur Pastebin: ${pastebinUrl}`);
-            }
-
-            return res.status(200).json({ 
-                share_url: pastebinUrl, 
-                type: 'text',
-                tool: 'Pastebin'
-            });
+            return res.status(200).json({ share_url: pastebinUrl, type: 'text', tool: 'Pastebin' });
         }
 
-        return res.status(400).json({ error: 'Type non supporté. Utilisez : chart, json, text.' });
-
+        return res.status(400).json({ error: 'Type non supporté.' });
     } catch (error) {
         console.error("Erreur share:", error);
         return res.status(500).json({ error: error.message });
