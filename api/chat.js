@@ -19,7 +19,6 @@ export default async function handler(req, res) {
 
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
-    // DÉTECTION DE LA LANGUE
     let currentLang = forcedLang;
     const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
     if (prefixMatch) {
@@ -36,7 +35,6 @@ export default async function handler(req, res) {
         }
     }
 
-    // DÉTECTION DES MOTS-CLÉS
     const hasMemoKeyword = /\bmemo\b/i.test(message);
     const hasValKeyword = /\bval\b/i.test(message);
     const shouldExtractSecrets = hasMemoKeyword || hasValKeyword;
@@ -84,17 +82,13 @@ RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
   2. "json" → pour les TABLEAUX (ingrédients, listes, contacts).
   3. "text" → pour le texte brut (notes).
 - Pour un TABLEAU, utilise TOUJOURS type="json".
-- N'invente JAMAIS un type.
 
 FORMAT DES DONNÉES (data_json) :
 - Pour "chart" : {"chartType": "bar", "labels": ["Jan","Fév"], "datasets": [{"label": "Ventes", "data": [10,20]}]}
 - Pour "json" : {"headers": ["Col1","Col2"], "rows": [["a","b"],["c","d"]]}
 - Pour "text" : {"content": "Note 1\nNote 2"}
 
-⚠️ IMPORTANT : "data_json" doit être une CHAÎNE JSON (pas un objet).
-
-⚠️ Quand tu appelles "share_data", le système te renverra un lien.
-Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.`;
+⚠️ IMPORTANT : "data_json" doit être une CHAÎNE JSON (pas un objet).`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -103,13 +97,12 @@ RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'A
 ⚠️ RÈGLE ANTI-RÉPÉTITION (CORRIGÉE) :
 - Si l'utilisateur te REDEMANDE la même chose, tu DOIS redonner la MÊME réponse.
 - Ne dis JAMAIS "je ne peux pas répéter" ou "je ne peux pas répondre à cette question".
-- Si l'information est dans tes connaissances (Supabase), redonne-la sans hésiter.
 
 RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
 - "Memo" = ENREGISTRER une information SECRÈTE (is_secret = true).
 - "Val" = ENREGISTRER une information PUBLIQUE (is_secret = false).
-- Si le message contient "Memo" → CONFIRME l'enregistrement ("✅ C'est noté, j'ai enregistré ce secret.").
-- Si le message contient "Val" → CONFIRME l'enregistrement ("✅ C'est noté, j'ai enregistré cette information.").
+- Si le message contient "Memo" → CONFIRME l'enregistrement.
+- Si le message contient "Val" → CONFIRME l'enregistrement.
 - Ne répète JAMAIS "Memo" ni "Val" dans ta réponse.
 
 RÈGLE DES OUTILS :
@@ -121,7 +114,6 @@ RÈGLE DES OUTILS :
 INTERDICTIONS :
 - "mon adresse mail est X" → NE PAS appeler send_email.
 - Ne mélange JAMAIS les langues.
-- N'invente JAMAIS de lien.
 
 RÈGLE DES SECRETS (CORRIGÉE) :
 - Les informations NON-SECRÈTES (is_secret = false) sont PUBLIQUES. Tu DOIS les donner sans condition.
