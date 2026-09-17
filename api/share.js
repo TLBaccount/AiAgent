@@ -3,26 +3,6 @@ function sanitizeHeader(text) {
     return text.replace(/[–—]/g, '-').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[^\x00-\x7F]/g, '').trim() || "Scoop Data";
 }
 
-function buildHtmlTable(data, title) {
-    let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>`;
-    html += `<style>body{font-family:Arial,sans-serif;padding:20px;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #ddd;padding:8px;text-align:left;} th{background:#1e3c72;color:white;} tr:nth-child(even){background:#f2f2f2;}</style>`;
-    html += `</head><body><h2>${title}</h2><table>`;
-    
-    if (data.headers && data.rows) {
-        html += '<thead><tr>';
-        data.headers.forEach(h => html += `<th>${h}</th>`);
-        html += '</tr></thead><tbody>';
-        data.rows.forEach(row => {
-            html += '<tr>';
-            row.forEach(cell => html += `<td>${cell}</td>`);
-            html += '</tr>';
-        });
-        html += '</tbody>';
-    }
-    html += '</table></body></html>';
-    return html;
-}
-
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -40,24 +20,35 @@ export default async function handler(req, res) {
         }
 
         if (type === 'json') {
-            const htmlContent = buildHtmlTable(data, title || 'Tableau');
-            
-            const brewResponse = await fetch("https://brewpage.app/api/html", {
+            const jsonbinKey = process.env.JSONBIN_API_KEY;
+            if (!jsonbinKey) throw new Error('Clé JSONBin manquante');
+
+            const response = await fetch("https://api.jsonbin.io/v3/b", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "User-Agent": "Scoop/1.0"
+                    "X-Master-Key": jsonbinKey,
+                    "X-Bin-Name": sanitizeHeader(title),
+                    "X-Bin-Private": "false"
                 },
-                body: JSON.stringify({ content: htmlContent, ttlDays: 30 })
+                body: JSON.stringify(data)
             });
 
-            if (!brewResponse.ok) throw new Error(`Erreur BrewPage: ${brewResponse.status}`);
-            const brewData = await brewResponse.json();
-            return res.status(200).json({ share_url: brewData.link, tool: 'BrewPage' });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Erreur JSONBin: ${response.status} - ${errorText}`);
+            }
+
+            const result = await response.json();
+            const jsonbinUrl = `https://api.jsonbin.io/v3/b/${result.metadata.id}/latest`;
+
+            return res.status(200).json({ share_url: jsonbinUrl, tool: 'JSONBin' });
         }
 
         if (type === 'text') {
             const pastebinKey = process.env.PASTEBIN_API_KEY;
+            if (!pastebinKey) throw new Error('Clé Pastebin manquante');
+            
             const params = new URLSearchParams();
             params.append('api_dev_key', pastebinKey);
             params.append('api_option', 'paste');
@@ -72,7 +63,11 @@ export default async function handler(req, res) {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: params.toString()
             });
+
             const pastebinUrl = await response.text();
+            if (!pastebinUrl.startsWith('https://pastebin.com/')) {
+                throw new Error(`Erreur Pastebin: ${pastebinUrl}`);
+            }
             return res.status(200).json({ share_url: pastebinUrl, tool: 'Pastebin' });
         }
 
