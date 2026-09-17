@@ -135,7 +135,6 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        // CASCADE : GEMINI → GROQ → OPENROUTER
         let response = null;
         let provider = null;
 
@@ -176,7 +175,7 @@ ${formatRules}`;
                         })
                     });
                     if (response.ok) provider = "Groq";
-                    else { console.error(`Groq a échoué (${response.status})`); response = null; }
+                    else { const errText = await response.text(); console.error(`Groq a échoué (${response.status}) : ${errText.substring(0, 200)}`); response = null; }
                 } catch (e) { console.error("Erreur Groq:", e.message); response = null; }
             }
         }
@@ -190,7 +189,7 @@ ${formatRules}`;
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openrouterKey}` },
                         body: JSON.stringify({
-                            model: "meta-llama/llama-3.3-70b-instruct:free",
+                            model: "meta-llama/llama-3.1-8b-instruct:free",
                             messages: [
                                 { role: "system", content: systemPrompt },
                                 ...fullHistory,
@@ -201,7 +200,7 @@ ${formatRules}`;
                         })
                     });
                     if (response.ok) provider = "OpenRouter";
-                    else { console.error(`OpenRouter a échoué (${response.status})`); response = null; }
+                    else { const errText = await response.text(); console.error(`OpenRouter a échoué (${response.status}) : ${errText.substring(0, 200)}`); response = null; }
                 } catch (e) { console.error("Erreur OpenRouter:", e.message); response = null; }
             }
         }
