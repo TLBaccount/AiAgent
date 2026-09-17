@@ -20,29 +20,46 @@ export default async function handler(req, res) {
         }
 
         if (type === 'json') {
-            const jsonbinKey = process.env.JSONBIN_API_KEY;
-            if (!jsonbinKey) throw new Error('Clé JSONBin manquante');
-
-            const response = await fetch("https://api.jsonbin.io/v3/b", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-Master-Key": jsonbinKey,
-                    "X-Bin-Name": sanitizeHeader(title),
-                    "X-Bin-Private": "false"
-                },
-                body: JSON.stringify(data)
+            // Convertir les données en CSV
+            const headers = data.headers || [];
+            const rows = data.rows || [];
+            
+            let csvContent = headers.join(',') + '\n';
+            rows.forEach(row => {
+                csvContent += row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',') + '\n';
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Erreur JSONBin: ${response.status} - ${errorText}`);
+            // Créer un Gist GitHub avec le CSV
+            const githubToken = process.env.GITHUB_TOKEN;
+            if (!githubToken) throw new Error('Token GitHub manquant');
+
+            const gistResponse = await fetch("https://api.github.com/gists", {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${githubToken}`,
+                    "Content-Type": "application/json",
+                    "User-Agent": "Scoop"
+                },
+                body: JSON.stringify({
+                    description: sanitizeHeader(title) + " - Données CSV",
+                    public: true,
+                    files: {
+                        "donnees.csv": {
+                            content: csvContent
+                        }
+                    }
+                })
+            });
+
+            if (!gistResponse.ok) {
+                const errorText = await gistResponse.text();
+                throw new Error(`Erreur GitHub Gist: ${gistResponse.status} - ${errorText}`);
             }
 
-            const result = await response.json();
-            const jsonbinUrl = `https://api.jsonbin.io/v3/b/${result.metadata.id}/latest`;
+            const gistData = await gistResponse.json();
+            const csvUrl = gistData.files["donnees.csv"].raw_url;
 
-            return res.status(200).json({ share_url: jsonbinUrl, tool: 'JSONBin' });
+            return res.status(200).json({ share_url: csvUrl, tool: 'CSV' });
         }
 
         if (type === 'text') {
@@ -65,9 +82,6 @@ export default async function handler(req, res) {
             });
 
             const pastebinUrl = await response.text();
-            if (!pastebinUrl.startsWith('https://pastebin.com/')) {
-                throw new Error(`Erreur Pastebin: ${pastebinUrl}`);
-            }
             return res.status(200).json({ share_url: pastebinUrl, tool: 'Pastebin' });
         }
 
