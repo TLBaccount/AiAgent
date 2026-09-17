@@ -56,7 +56,7 @@ export default async function handler(req, res) {
     const fullHistory = (history || []).slice(-20);
 
     try {
-        // OPTIMISATION A : extractSecrets UNIQUEMENT si "Memo"
+        // OPTIMISATION : extractSecrets UNIQUEMENT si "Memo"
         if (hasMemoKeyword) {
             await extractSecrets(message, "", supabaseUrl, supabaseKey, true);
         }
@@ -85,18 +85,15 @@ RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
   3. TEXTE : pour les notes.
 
 ⚠️ IMPORTANT : Quand tu appelles "share_data", le système te renverra un lien.
-Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.
-NE JAMAIS écrire "[visualisation en ligne]" ou du texte inventé.`;
+Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
 RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
-⚠️ RÈGLE ANTI-RÉPÉTITION (TRÈS IMPORTANTE) :
+⚠️ RÈGLE ANTI-RÉPÉTITION :
 - Tu ne dois JAMAIS répéter une réponse précédente.
-- Tu ne dois JAMAIS copier-coller un ancien message.
-- Tu dois répondre UNIQUEMENT à la demande ACTUELLE.
-- Si l'utilisateur demande un graphique, tu génères le graphique, tu ne répètes PAS la liste de courses précédente.
+- Réponds UNIQUEMENT à la demande ACTUELLE.
 
 RÈGLE DU MOT-CLÉ "MEMO" :
 - "Memo" = ENREGISTRER une information.
@@ -136,20 +133,20 @@ ${formatRules}`;
         ];
 
         // ============================================
-        // CASCADE : CEREBRAS → GROQ (corrigée)
+        // CASCADE : GEMINI → GROQ → MISTRAL → OPENROUTER
         // ============================================
         let response = null;
         let provider = null;
 
-        // TENTATIVE 1 : CEREBRAS (modèle qwen-3.8-27b)
-        const cerebrasKey = process.env.CEREBRAS_API_KEY;
-        if (cerebrasKey) {
+        // TENTATIVE 1 : GEMINI (Google AI Studio)
+        const geminiKey = process.env.GOOGLE_AI_KEY;
+        if (geminiKey) {
             try {
-                response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+                response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${cerebrasKey}` },
+                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${geminiKey}` },
                     body: JSON.stringify({
-                        model: "qwen-3.8-27b",
+                        model: "gemini-2.5-flash",
                         messages: [
                             { role: "system", content: systemPrompt },
                             ...fullHistory,
@@ -161,18 +158,18 @@ ${formatRules}`;
                 });
                 
                 if (response.ok) {
-                    provider = "Cerebras";
+                    provider = "Gemini";
                 } else {
-                    console.error(`Cerebras a échoué (${response.status}) :`, await response.text());
+                    console.error(`Gemini a échoué (${response.status})`);
                     response = null;
                 }
             } catch (e) { 
-                console.error("Erreur Cerebras:", e.message); 
+                console.error("Erreur Gemini:", e.message); 
                 response = null;
             }
         }
 
-        // TENTATIVE 2 : GROQ (fallback)
+        // TENTATIVE 2 : GROQ
         if (!provider) {
             const groqKey = process.env.GROQ_API_KEY;
             if (groqKey) {
@@ -195,11 +192,77 @@ ${formatRules}`;
                     if (response.ok) {
                         provider = "Groq";
                     } else {
-                        console.error(`Groq a échoué (${response.status}) :`, await response.text());
+                        console.error(`Groq a échoué (${response.status})`);
                         response = null;
                     }
                 } catch (e) { 
                     console.error("Erreur Groq:", e.message); 
+                    response = null;
+                }
+            }
+        }
+
+        // TENTATIVE 3 : MISTRAL
+        if (!provider) {
+            const mistralKey = process.env.MISTRAL_API_KEY;
+            if (mistralKey) {
+                try {
+                    response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${mistralKey}` },
+                        body: JSON.stringify({
+                            model: "mistral-small-latest",
+                            messages: [
+                                { role: "system", content: systemPrompt },
+                                ...fullHistory,
+                                { role: "user", content: message }
+                            ],
+                            tools: tools,
+                            tool_choice: "auto"
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        provider = "Mistral";
+                    } else {
+                        console.error(`Mistral a échoué (${response.status})`);
+                        response = null;
+                    }
+                } catch (e) { 
+                    console.error("Erreur Mistral:", e.message); 
+                    response = null;
+                }
+            }
+        }
+
+        // TENTATIVE 4 : OPENROUTER
+        if (!provider) {
+            const openrouterKey = process.env.OPENROUTER_API_KEY;
+            if (openrouterKey) {
+                try {
+                    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openrouterKey}` },
+                        body: JSON.stringify({
+                            model: "meta-llama/llama-3.3-70b-instruct:free",
+                            messages: [
+                                { role: "system", content: systemPrompt },
+                                ...fullHistory,
+                                { role: "user", content: message }
+                            ],
+                            tools: tools,
+                            tool_choice: "auto"
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        provider = "OpenRouter";
+                    } else {
+                        console.error(`OpenRouter a échoué (${response.status})`);
+                        response = null;
+                    }
+                } catch (e) { 
+                    console.error("Erreur OpenRouter:", e.message); 
                     response = null;
                 }
             }
@@ -361,7 +424,7 @@ async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, force
 
 RÈGLE DE CLASSIFICATION :
 - Si "Memo" → SECRET (is_secret = true).
-- Sinon → NON-SECRET (is_secret = false), SAUF si intrinsèquement sensible.
+- Sinon → NON-SECRET (is_secret = false).
 
 RÈGLE DES NUMÉROS :
 - Par défaut, MOBILE → "tel_mobile".
@@ -396,4 +459,4 @@ Si rien : {"secrets": []}` },
     } catch (error) { 
         console.error("Erreur extraction secrets:", error.message); 
     }
-                    }
+}
