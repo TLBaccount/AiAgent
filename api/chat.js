@@ -135,6 +135,7 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
+        // CASCADE : GEMINI → GROQ → OPENROUTER
         let response = null;
         let provider = null;
 
@@ -142,11 +143,10 @@ ${formatRules}`;
         const geminiKey = process.env.GOOGLE_AI_KEY;
         if (geminiKey) {
             try {
-                response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent", {
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        model: "gemini-3.8-flash",
                         contents: [{ role: "user", parts: [{ text: message }] }],
                         systemInstruction: { parts: [{ text: systemPrompt }] }
                     })
@@ -216,8 +216,59 @@ ${formatRules}`;
             botText = data.candidates[0].content.parts[0].text.trim();
         } else {
             const responseMessage = data.choices[0].message;
+            
             if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
-                // ... (gestion des outils identique à avant)
+                const toolCall = responseMessage.tool_calls[0];
+                const functionName = toolCall.function.name;
+                const functionArgs = JSON.parse(toolCall.function.arguments);
+
+                if (functionName === "shorten_url") {
+                    const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: functionArgs.url })
+                    });
+                    const shortenData = await shortenRes.json();
+                    return res.status(200).json({ reply: `🔗 Lien court : ${shortenData.short_url}`, lang: currentLang });
+                }
+
+                if (functionName === "share_data") {
+                    const shareRes = await fetch(`${siteUrl}/api/share`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ type: functionArgs.type, data: functionArgs.data, title: functionArgs.title || "" })
+                    });
+                    const shareData = await shareRes.json();
+
+                    if (shareData.share_url) {
+                        const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ url: shareData.share_url })
+                        });
+                        const shortenData = await shortenRes.json();
+                        const finalUrl = shortenData.short_url || shareData.share_url;
+                        return res.status(200).json({ reply: `🔗 Lien ${shareData.tool} : ${finalUrl}`, lang: currentLang });
+                    }
+                    return res.status(200).json({ reply: `❌ Impossible de partager : ${shareData.error}`, lang: currentLang });
+                }
+
+                let activepiecesUrl = null;
+                let actionType = null;
+
+                if (functionName === "send_email") { activepiecesUrl = URL_EMAIL; actionType = "email"; }
+                else if (functionName === "create_event") { activepiecesUrl = URL_CALENDAR; actionType = "calendar"; }
+                else if (functionName === "search_web") { activepiecesUrl = URL_SEARCH; actionType = "search"; }
+
+                if (activepiecesUrl) {
+                    const apResponse = await fetch(activepiecesUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: functionArgs, type: actionType, user: agentName })
+                    });
+                    const apData = await apResponse.json();
+                    return res.status(200).json({ reply: `✅ Action "${actionType}" exécutée !`, lang: currentLang });
+                }
             }
             botText = responseMessage.content.trim();
         }
@@ -236,4 +287,124 @@ ${formatRules}`;
     }
 }
 
-// ... (fonctions estimateTokens, cleanupIfNeeded, getSecrets, upsertSecret, extractSecrets identiques)
+function estimateTokens(text) { return Math.ceil(text.length / 4); }
+
+async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
+    try {
+        const res = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const messages = await res.json();
+        if (!Array.isArray(messages)) return;
+        const totalTokens = messages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
+        if (totalTokens > 12000 * 0.85) {
+            const messagesToDelete = Math.floor(messages.length * 0.3);
+            const idsToDelete = messages.slice(0, messagesToDelete).map(m => m.id);
+            await fetch(`${supabaseUrl}/rest/v1/messages?id=in.(${idsToDelete.join(',')})`, {
+                method: "DELETE",
+                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            });
+        }
+    } catch (error) { console.error("Erreur nettoyage:", error); }
+}
+
+async function getSecrets(supabaseUrl, supabaseKey) {
+    try {
+        const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+    } catch (error) { return []; }
+}
+
+function isArabicScript(text) { return /[\u0600-\u06FF]/.test(text); }
+
+async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecret) {
+    const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
+    const existingRes = await fetch(
+        `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
+        { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` } }
+    );
+    const existing = await existingRes.json();
+    const match = Array.isArray(existing)
+        ? existing.find(row => (isArabicScript(row.value) ? 'ar' : 'latin') === scriptOfNew)
+        : null;
+
+    if (match) {
+        await fetch(`${supabaseUrl}/rest/v1/secrets?id=eq.${match.id}`, {
+            method: "PATCH",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ value: value, is_secret: isSecret })
+        });
+    } else {
+        await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+            method: "POST",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: userId, key: key, value: value, is_secret: isSecret })
+        });
+    }
+}
+
+async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
+    const groqKey = process.env.GROQ_API_KEY;
+    try {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
+            body: JSON.stringify({
+                model: "openai/gpt-oss-20b",
+                reasoning_effort: "low",
+                response_format: { type: "json_object" },
+                messages: [
+                    { role: "system", content: `Tu es un extracteur d'informations.
+
+RÈGLE ABSOLUE N°1 (DÉCLENCHEMENT) :
+- Si le message contient "Memo" → tu extrais les informations et tu les classes SECRÈTES (is_secret = true).
+- Si le message contient "Val" → tu extrais les informations et tu les classes PUBLIQUES (is_secret = false).
+- Si le message ne contient NI "Memo" NI "Val" → tu réponds {"secrets": []} (RIEN À ENREGISTRER).
+
+RÈGLE ABSOLUE N°2 (CLÉS UNIQUES - NE JAMAIS ÉCRASER) :
+- Tu dois TOUJOURS utiliser des clés UNIQUES et DESCRIPTIVES.
+- Pour distinguer les personnes, utilise un suffixe :
+  - prenom_perso, prenom_femme, prenom_ami_X
+  - nom_famille_perso, nom_famille_femme
+  - email_perso, email_femme, email_pro
+  - tel_mobile_perso, tel_mobile_femme, tel_mobile_perso_2
+- NE JAMAIS utiliser une clé générique (prenom, email, tel) si elle peut être ambiguë.
+
+RÈGLE ABSOLUE N°3 (NUMÉROS) :
+- Par défaut, MOBILE → "tel_mobile_XXX".
+- "fixe" explicite → "tel_fixe_XXX".
+- "2ème numéro" → nouvelle clé (tel_mobile_perso_2).
+
+EXEMPLES :
+- "Memo, je m'appelle Fateh" → [{"key": "prenom_perso", "value": "Fateh", "is_secret": true}]
+- "Memo, le prénom de ma femme est SOUAD" → [{"key": "prenom_femme", "value": "SOUAD", "is_secret": true}]
+- "Val, mon email est f@t.com" → [{"key": "email_perso", "value": "f@t.com", "is_secret": false}]
+- "Bonjour" → {"secrets": []}
+
+Réponds en JSON : {"secrets": [...]}
+Si rien : {"secrets": []}` },
+                    { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
+                ]
+            })
+        });
+        
+        const data = await response.json();
+        let content = data.choices[0].message.content.trim();
+        content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) content = jsonMatch[0];
+        
+        const parsed = JSON.parse(content);
+        const secrets = parsed.secrets || [];
+        
+        for (const secret of secrets) {
+            const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
+            await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
+        }
+    } catch (error) { 
+        console.error("Erreur extraction secrets:", error.message); 
+    }
+}
