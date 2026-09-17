@@ -59,7 +59,7 @@ export default async function handler(req, res) {
     try {
         // EXTRACTION DES SECRETS (UNIQUEMENT si Memo ou Val)
         if (shouldExtractSecrets) {
-            const forceSecret = hasMemoKeyword ? true : false; // Memo = secret, Val = non-secret
+            const forceSecret = hasMemoKeyword ? true : false;
             await extractSecrets(message, "", supabaseUrl, supabaseKey, forceSecret);
         }
 
@@ -81,10 +81,12 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
 - Si l'utilisateur demande un TABLEAU, GRAPHIQUE, ou DONNÉES :
 → Utilise l'outil "share_data".
-- CHOISIS le format :
-  1. GRAPHIQUE (bar/pie/line) : pour comparer, proportions, évolutions.
-  2. JSON : pour les tableaux structurés.
-  3. TEXTE : pour les notes.
+- Types AUTORISÉS (uniquement ces 3) :
+  1. "chart" → pour les graphiques (bar, pie, line).
+  2. "json" → pour les TABLEAUX (ingrédients, listes, contacts).
+  3. "text" → pour le texte brut (notes).
+- Pour un TABLEAU, utilise TOUJOURS type="json".
+- N'invente JAMAIS un type.
 
 ⚠️ IMPORTANT : Quand tu appelles "share_data", le système te renverra un lien.
 Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.`;
@@ -135,7 +137,9 @@ ${formatRules}`;
             { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
         ];
 
-        // CASCADE : GEMINI → GROQ → MISTRAL → OPENROUTER
+        // ============================================
+        // CASCADE : GEMINI → GROQ → OPENROUTER
+        // ============================================
         let response = null;
         let provider = null;
 
@@ -187,32 +191,7 @@ ${formatRules}`;
             }
         }
 
-        // TENTATIVE 3 : MISTRAL
-        if (!provider) {
-            const mistralKey = process.env.MISTRAL_API_KEY;
-            if (mistralKey) {
-                try {
-                    response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${mistralKey}` },
-                        body: JSON.stringify({
-                            model: "mistral-small-latest",
-                            messages: [
-                                { role: "system", content: systemPrompt },
-                                ...fullHistory,
-                                { role: "user", content: message }
-                            ],
-                            tools: tools,
-                            tool_choice: "auto"
-                        })
-                    });
-                    if (response.ok) provider = "Mistral";
-                    else { console.error(`Mistral a échoué (${response.status})`); response = null; }
-                } catch (e) { console.error("Erreur Mistral:", e.message); response = null; }
-            }
-        }
-
-        // TENTATIVE 4 : OPENROUTER
+        // TENTATIVE 3 : OPENROUTER
         if (!provider) {
             const openrouterKey = process.env.OPENROUTER_API_KEY;
             if (openrouterKey) {
@@ -428,7 +407,6 @@ Si rien : {"secrets": []}` },
         const secrets = parsed.secrets || [];
         
         for (const secret of secrets) {
-            // Le mot-clé force le secret (Memo=true) ou public (Val=false)
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
             await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
         }
