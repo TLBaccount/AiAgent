@@ -283,7 +283,10 @@ ${formatRules}`;
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\bmemo\b/gi, "").trim();
         botText = botText.replace(/\bval\b/gi, "").trim();
-        botText = botText.replace(/\s+/g, " ").trim();
+        // Nettoyage qui PRÉSERVE les sauts de ligne
+        botText = botText.replace(/[ \t]+/g, " ");   // Espaces multiples → 1 espace
+        botText = botText.replace(/\n{3,}/g, "\n\n"); // 3+ sauts de ligne → 2 max
+        botText = botText.trim();
 
         return res.status(200).json({ reply: botText, lang: currentLang });
 
