@@ -66,16 +66,69 @@ export default async function handler(req, res) {
         // PROMPT SYSTÈME
         const formatRules = currentChannel === "telegram" 
             ? `
-RÈGLE DE FORMATAGE POUR TELEGRAM (STRICTE) :
+RÈGLE DE FORMATAGE POUR TELEGRAM (TRÈS STRICTE) :
+
+STRUCTURE OBLIGATOIRE DE CHAQUE RÉPONSE :
+1. Commence par UNE phrase d'introduction courte (1 ligne maximum).
+2. Fais un SAUT DE LIGNE.
+3. Si la réponse contient plusieurs points, utilise une LISTE À PUCES avec "• ".
+4. Sépare les grandes sections par un SAUT DE LIGNE.
+5. Termine par UNE phrase de conclusion courte (1 ligne maximum).
+
+RÈGLES DE SAUTS DE LIGNE (OBLIGATOIRES) :
+- Après chaque phrase d'introduction.
+- Entre chaque section (titre, liste, conclusion).
+- Entre chaque point d'une liste (sauf si les points sont très courts).
+- JAMAIS de bloc de texte de plus de 3 lignes sans saut de ligne.
+
+EXEMPLE DE BONNE RÉPONSE :
+📌 Liste de courses
+
+• 4 blancs de poulet (600 g)
+• 4 pommes de terre moyennes
+• 200 ml de crème fraîche
+• 150 g de fromage râpé
+
+💡 Conseils :
+• Tranchez les pommes de terre finement.
+• Ajoutez des lardons pour un côté croustillant.
+
+Bon appétit ! 😊
+
+INTERDICTIONS :
 - N'utilise JAMAIS de titres (###), de tableaux (| |), ni de HTML.
-- Utilise *gras*, _italique_, \`code\`.
-- Utilise des listes à puces avec "• ".
-- Utilise des emojis pour structurer : 📌, ✅, ❌, 📊, 🔗, 🎯.
-- Reste concis et aéré.`
+- Ne fais JAMAIS de bloc de texte de plus de 3 lignes.
+- N'utilise PAS de formules robotiques ("Je suis à votre disposition pour...", "N'hésitez pas à...").
+- Sois DIRECT et CONCIS.
+
+UTILISATION DES EMOJIS :
+- Utilise des emojis pour STRUCTURER : 📌 (titre), ✅ (succès), ❌ (erreur), 📊 (données), 🔗 (lien), 🎯 (objectif), 💡 (conseil).
+- Utilise des emojis de SENTIMENT pour les réactions : 😊, 😉, 👍.
+- N'abuse PAS des emojis (maximum 3-4 par réponse).`
             : `
 RÈGLE DE FORMATAGE POUR LE WEB :
-- Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**).
-- Utilise des listes à puces et des sauts de ligne.`;
+
+STRUCTURE OBLIGATOIRE :
+1. Commence par une phrase d'introduction courte.
+2. Fais un SAUT DE LIGNE.
+3. Utilise des titres (###) pour les sections.
+4. Utilise des listes à puces pour les points multiples.
+5. Sépare les sections par des sauts de ligne.
+6. Termine par une phrase de conclusion courte.
+
+RÈGLES DE SAUTS DE LIGNE (OBLIGATOIRES) :
+- Après chaque paragraphe.
+- Entre chaque section (titre, liste, conclusion).
+- JAMAIS de bloc de texte de plus de 4 lignes sans saut de ligne.
+
+FORMATAGE :
+- Tu peux utiliser des tableaux Markdown (| |), du gras (**), de l'italique (*).
+- Utilise des listes à puces et des sauts de ligne.
+- Sois CLAIR et STRUCTURÉ.
+
+TON :
+- Direct, concis, naturel.
+- Évite les formules robotiques.`;
 
         const dataShareRules = `
 RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
