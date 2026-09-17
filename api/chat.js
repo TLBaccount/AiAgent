@@ -19,6 +19,7 @@ export default async function handler(req, res) {
 
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
+    // DÉTECTION DE LA LANGUE
     let currentLang = forcedLang;
     const prefixMatch = message.match(/^\[(fr|en|ar)\]\s*/i);
     if (prefixMatch) {
@@ -35,6 +36,7 @@ export default async function handler(req, res) {
         }
     }
 
+    // DÉTECTION DES MOTS-CLÉS
     const hasMemoKeyword = /\bmemo\b/i.test(message);
     const hasValKeyword = /\bval\b/i.test(message);
     const shouldExtractSecrets = hasMemoKeyword || hasValKeyword;
@@ -74,21 +76,43 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 - Utilise des listes à puces et des sauts de ligne.`;
 
         const dataShareRules = `
-RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
-- Si l'utilisateur demande un TABLEAU, GRAPHIQUE, ou DONNÉES :
-→ Utilise l'outil "share_data".
-- Types AUTORISÉS (uniquement ces 3) :
-  1. "chart" → pour les graphiques (bar, pie, line).
-  2. "json" → pour les TABLEAUX (ingrédients, listes, contacts).
-  3. "text" → pour le texte brut (notes).
-- Pour un TABLEAU, utilise TOUJOURS type="json".
+🎯 RÈGLE ABSOLUE POUR "share_data" (LIS ATTENTIVEMENT) :
 
-FORMAT DES DONNÉES (data_json) :
+Tu ne dois utiliser l'outil "share_data" QUE dans les 3 cas suivants :
+
+CAS 1 : L'utilisateur demande EXPLICITEMENT un TABLEAU
+- Mots-clés déclencheurs : "tableau", "table", "csv", "excel", "sous forme de tableau", "dans un tableau"
+- Exemple : "Donne-moi un tableau des ingrédients" → share_data avec type="json"
+- Exemple : "Mets ça dans un tableau" → share_data avec type="json"
+
+CAS 2 : L'utilisateur demande EXPLICITEMENT un GRAPHIQUE
+- Mots-clés déclencheurs : "graphique", "chart", "diagramme", "courbe", "camembert", "illustre", "visualise"
+- Exemple : "Illustre-moi les ventes" → share_data avec type="chart"
+- Exemple : "Fais-moi un camembert" → share_data avec type="chart"
+
+CAS 3 : L'utilisateur demande EXPLICITEMENT un PARTAGE
+- Mots-clés déclencheurs : "partage", "lien", "export", "téléchargeable", "fichier"
+- Exemple : "Partage-moi ces données" → share_data
+- Exemple : "Donne-moi un lien" → share_data
+
+⚠️ DANS TOUS LES AUTRES CAS, TU NE DOIS PAS UTILISER "share_data".
+
+INTERDICTIONS ABSOLUES :
+- Si l'utilisateur demande une LISTE (ex: "donne-moi une liste de courses") → TEXTE NORMAL avec des puces.
+- Si l'utilisateur demande une RECETTE (ex: "comment préparer un café") → TEXTE NORMAL.
+- Si l'utilisateur demande une EXPLICATION → TEXTE NORMAL.
+- Si l'utilisateur fait une CONVERSATION → TEXTE NORMAL.
+
+⚠️ NE JAMAIS utiliser "share_data" pour une simple liste à puces.
+⚠️ NE JAMAIS utiliser "share_data" pour une recette ou une explication.
+
+FORMAT DES DONNÉES (data_json) SI share_data EST UTILISÉ :
 - Pour "chart" : {"chartType": "bar", "labels": ["Jan","Fév"], "datasets": [{"label": "Ventes", "data": [10,20]}]}
 - Pour "json" : {"headers": ["Col1","Col2"], "rows": [["a","b"],["c","d"]]}
 - Pour "text" : {"content": "Note 1\nNote 2"}
 
-⚠️ IMPORTANT : "data_json" doit être une CHAÎNE JSON (pas un objet).`;
+⚠️ "data_json" doit être une CHAÎNE JSON (pas un objet).
+⚠️ N'ajoute AUCUN texte après le JSON.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -109,7 +133,7 @@ RÈGLE DES OUTILS :
 - send_email : UNIQUEMENT si "envoie un email à X".
 - create_event : UNIQUEMENT si "ajoute un événement".
 - search_web : UNIQUEMENT si "cherche", "recherche".
-- share_data : OBLIGATOIRE pour tableau/graphique.
+- share_data : UNIQUEMENT si l'utilisateur demande EXPLICITEMENT un tableau, un graphique ou un partage.
 
 INTERDICTIONS :
 - "mon adresse mail est X" → NE PAS appeler send_email.
@@ -132,7 +156,7 @@ ${formatRules}`;
             { type: "function", function: { name: "create_event", description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: ["title", "date", "time"] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
-            { type: "function", function: { name: "share_data", description: "Partage des données. Le paramètre data_json doit être une CHAÎNE JSON.", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string", description: "Titre du partage" }, data_json: { type: "string", description: "Données au format JSON (chaîne de caractères)" } }, required: ["type", "data_json"] } } }
+            { type: "function", function: { name: "share_data", description: "Partage des données UNIQUEMENT si l'utilisateur demande EXPLICITEMENT un tableau, un graphique ou un partage. NE PAS utiliser pour une simple liste ou recette.", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string", description: "Titre du partage" }, data_json: { type: "string", description: "Données au format JSON (chaîne de caractères)" } }, required: ["type", "data_json"] } } }
         ];
 
         let response = null;
@@ -234,7 +258,13 @@ ${formatRules}`;
                 if (functionName === "share_data") {
                     let parsedData;
                     try {
-                        parsedData = JSON.parse(functionArgs.data_json);
+                        let jsonText = functionArgs.data_json.trim();
+                        const start = jsonText.indexOf('{');
+                        const end = jsonText.lastIndexOf('}');
+                        if (start !== -1 && end !== -1 && end > start) {
+                            jsonText = jsonText.substring(start, end + 1);
+                        }
+                        parsedData = JSON.parse(jsonText);
                     } catch (e) {
                         return res.status(200).json({ reply: `❌ Erreur de format des données : ${e.message}`, lang: currentLang });
                     }
@@ -279,11 +309,11 @@ ${formatRules}`;
             botText = responseMessage.content.trim();
         }
 
+        // Nettoyage qui PRÉSERVE les sauts de ligne
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         botText = botText.replace(/\bmemo\b/gi, "").trim();
         botText = botText.replace(/\bval\b/gi, "").trim();
-        // Nettoyage qui PRÉSERVE les sauts de ligne
         botText = botText.replace(/[ \t]+/g, " ");   // Espaces multiples → 1 espace
         botText = botText.replace(/\n{3,}/g, "\n\n"); // 3+ sauts de ligne → 2 max
         botText = botText.trim();
