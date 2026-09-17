@@ -86,7 +86,15 @@ RÈGLE DE PARTAGE DE DONNÉES (ABSOLUE) :
 - Pour un TABLEAU, utilise TOUJOURS type="json".
 - N'invente JAMAIS un type.
 
-⚠️ IMPORTANT : Quand tu appelles "share_data", le système te renverra un lien.
+FORMAT DES DONNÉES (data_json) :
+- Pour "chart" : {"chartType": "bar", "labels": ["Jan","Fév"], "datasets": [{"label": "Ventes", "data": [10,20]}]}
+- Pour "json" : {"headers": ["Col1","Col2"], "rows": [["a","b"],["c","d"]]}
+- Pour "text" : {"content": "Note 1\nNote 2"}
+
+⚠️ IMPORTANT : "data_json" doit être une CHAÎNE JSON (pas un objet).
+Exemple : data_json = "{\\"headers\\":[\\"Ingrédient\\",\\"Quantité\\"],\\"rows\\":[[\\"Poulet\\",\\"500 g\\"]]}"
+
+⚠️ Quand tu appelles "share_data", le système te renverra un lien.
 Tu DOIS utiliser ce lien tel quel. NE JAMAIS inventer de lien.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
@@ -127,12 +135,13 @@ ${privateText}
 ${dataShareRules}
 ${formatRules}`;
 
+        // OUTIL SIMPLIFIÉ : data_json est une chaîne, pas un objet
         const tools = [
             { type: "function", function: { name: "send_email", description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } } },
             { type: "function", function: { name: "create_event", description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: ["title", "date", "time"] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
-            { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). CHOISIS le meilleur format.", parameters: { type: "object", properties: { type: { type: "string" }, title: { type: "string" }, data: { type: "object" } }, required: ["type", "data"] } } }
+            { type: "function", function: { name: "share_data", description: "Partage des données (tableau, graphique, texte). Le paramètre data_json doit être une CHAÎNE JSON.", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string", description: "Titre du partage" }, data_json: { type: "string", description: "Données au format JSON (chaîne de caractères)" } }, required: ["type", "data_json"] } } }
         ];
 
         let response = null;
@@ -189,7 +198,7 @@ ${formatRules}`;
                         method: "POST",
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openrouterKey}` },
                         body: JSON.stringify({
-                            model: "meta-llama/llama-3.1-8b-instruct:free",
+                            model: "z-ai/glm-5.2:free",
                             messages: [
                                 { role: "system", content: systemPrompt },
                                 ...fullHistory,
@@ -232,10 +241,18 @@ ${formatRules}`;
                 }
 
                 if (functionName === "share_data") {
+                    // data_json est une chaîne JSON, on la parse
+                    let parsedData;
+                    try {
+                        parsedData = JSON.parse(functionArgs.data_json);
+                    } catch (e) {
+                        return res.status(200).json({ reply: `❌ Erreur de format des données : ${e.message}`, lang: currentLang });
+                    }
+
                     const shareRes = await fetch(`${siteUrl}/api/share`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ type: functionArgs.type, data: functionArgs.data, title: functionArgs.title || "" })
+                        body: JSON.stringify({ type: functionArgs.type, data: parsedData, title: functionArgs.title || "" })
                     });
                     const shareData = await shareRes.json();
 
