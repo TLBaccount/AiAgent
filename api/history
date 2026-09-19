@@ -1,0 +1,23 @@
+export default async function handler(req, res) {
+    const code = process.env.SCOOP_WEB_CODE;
+    if (code && req.headers['x-scoop-code'] !== code) {
+        return res.status(401).json({ error: 'Accès refusé' });
+    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+    const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+    try {
+        const r = await fetch(`${supabaseUrl}/rest/v1/messages?select=role,content&order=id.desc&limit=20`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
+            signal: AbortSignal.timeout(10000)
+        });
+        const data = await r.json();
+        const messages = Array.isArray(data) ? data.reverse() : [];
+        return res.status(200).json(messages);
+    } catch (e) {
+        return res.status(200).json([]);
+    }
+}
