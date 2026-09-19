@@ -4,10 +4,10 @@ const agentName = "Scoop";
 const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
-// Sécurité : vérifie le code secret (envoyé en header, jamais visible dans le code public)
+// Sécurité : vérifie le code secret (header x-scoop-code)
 function checkAuth(req) {
     const code = process.env.SCOOP_WEB_CODE;
-    if (!code) return true; // ⚠️ Ajoute SCOOP_WEB_CODE dans Vercel (Étape 0)
+    if (!code) return true; // ⚠️ Ajoute SCOOP_WEB_CODE dans Vercel (Étape 5)
     return req.headers['x-scoop-code'] === code;
 }
 
@@ -20,13 +20,13 @@ export default async function handler(req, res) {
     }
 
     const { forcedLang, channel } = req.body;
-    let userMessage = String(req.body.message || '').trim(); // "let" (correction du bug const)
+    let userMessage = String(req.body.message || '').trim(); // "let" (bug const corrigé)
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
 
-    // URLs Activepieces en variables d'environnement (plus jamais en clair dans le code)
+    // URLs Activepieces en variables d'environnement (régénérées — Étape 5)
     const URL_CALENDAR = process.env.ACTIVEPIECES_CALENDAR_URL;
     const URL_EMAIL = process.env.ACTIVEPIECES_EMAIL_URL;
     const URL_SEARCH = process.env.ACTIVEPIECES_SEARCH_URL;
@@ -55,7 +55,7 @@ export default async function handler(req, res) {
     if (lowerMsg.includes(agentName.toLowerCase()) &&
         (lowerMsg.includes("quelle heure") || lowerMsg.includes("what time") || lowerMsg.includes("الساعة"))) {
         const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        return respond(supabaseUrl, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
+        return respond(res, supabaseUrl, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
     }
 
     // Mots-clés Memo / Val
@@ -72,7 +72,7 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique chargé ICI (le navigateur ne peut plus envoyer le sien)
+    // Historique chargé ICI, côté serveur (le navigateur n'envoie plus le sien)
     const fullHistory = await loadHistory(supabaseUrl, supabaseKey);
 
     try {
@@ -207,7 +207,7 @@ ${formatRules}`;
         }
 
         if (!provider) {
-            return respond(supabaseUrl, supabaseKey, userMessage,
+            return respond(res, supabaseUrl, supabaseKey, userMessage,
                 "⏳ Tous les moteurs IA sont momentanément indisponibles (quota ou panne). Réessaie dans quelques minutes.",
                 currentLang);
         }
@@ -228,7 +228,7 @@ ${formatRules}`;
                 try {
                     functionArgs = JSON.parse(toolCall.function.arguments);
                 } catch {
-                    return respond(supabaseUrl, supabaseKey, userMessage, "❌ Argument d'action invalide.", currentLang);
+                    return respond(res, supabaseUrl, supabaseKey, userMessage, "❌ Argument d'action invalide.", currentLang);
                 }
 
                 if (functionName === "shorten_url") {
@@ -238,7 +238,7 @@ ${formatRules}`;
                         body: JSON.stringify({ url: functionArgs.url })
                     });
                     const shortenData = await shortenRes.json();
-                    return respond(supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
+                    return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
                 }
 
                 if (functionName === "share_data") {
@@ -252,7 +252,7 @@ ${formatRules}`;
                         }
                         parsedData = JSON.parse(jsonText);
                     } catch (e) {
-                        return respond(supabaseUrl, supabaseKey, userMessage, `❌ Erreur de format des données : ${e.message}`, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Erreur de format des données : ${e.message}`, currentLang);
                     }
 
                     const shareRes = await fetch(`${siteUrl}/api/share`, {
@@ -270,9 +270,9 @@ ${formatRules}`;
                         });
                         const shortenData = await shortenRes.json();
                         const finalUrl = shortenData.short_url || shareData.share_url;
-                        return respond(supabaseUrl, supabaseKey, userMessage, `🔗 Lien ${shareData.tool} : ${finalUrl}`, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien ${shareData.tool} : ${finalUrl}`, currentLang);
                     }
-                    return respond(supabaseUrl, supabaseKey, userMessage, `❌ Impossible de partager : ${shareData.error}`, currentLang);
+                    return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Impossible de partager : ${shareData.error}`, currentLang);
                 }
 
                 let activepiecesUrl = null;
@@ -294,19 +294,19 @@ ${formatRules}`;
                         let apData = null;
                         try { apData = JSON.parse(raw); } catch (e) { /* réponse non JSON */ }
                         if (!apResponse.ok) {
-                            return respond(supabaseUrl, supabaseKey, userMessage, `❌ Action "${actionType}" a échoué (${apResponse.status}).`, currentLang);
+                            return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Action "${actionType}" a échoué (${apResponse.status}).`, currentLang);
                         }
                         const result = apData && (apData.result || apData.output || apData.response);
                         const reply = actionType === "search" && result
                             ? `🔎 ${String(result).slice(0, 500)}`
                             : `✅ Action "${actionType}" exécutée !`;
-                        return respond(supabaseUrl, supabaseKey, userMessage, reply, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
                     } catch (e) {
-                        return respond(supabaseUrl, supabaseKey, userMessage, `❌ Action "${actionType}" a échoué : ${e.message}`, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Action "${actionType}" a échoué : ${e.message}`, currentLang);
                     }
                 }
                 if (["send_email", "create_event", "search_web"].includes(functionName)) {
-                    return respond(supabaseUrl, supabaseKey, userMessage, `⚠️ L'action "${functionName}" n'est pas configurée (URL manquante dans les variables d'environnement).`, currentLang);
+                    return respond(res, supabaseUrl, supabaseKey, userMessage, `⚠️ L'action "${functionName}" n'est pas configurée (URL manquante dans les variables d'environnement).`, currentLang);
                 }
             }
             botText = String(responseMessage.content || "").trim();
@@ -319,18 +319,18 @@ ${formatRules}`;
         botText = botText.replace(/\n{3,}/g, "\n\n");
         botText = botText.trim();
 
-        return respond(supabaseUrl, supabaseKey, userMessage, botText, currentLang);
+        return respond(res, supabaseUrl, supabaseKey, userMessage, botText, currentLang);
 
     } catch (error) {
         console.error("Erreur serveur:", error);
-        return respond(supabaseUrl, supabaseKey, userMessage, "❌ Erreur interne du serveur.", currentLang);
+        return respond(res, supabaseUrl, supabaseKey, userMessage, "❌ Erreur interne du serveur.", currentLang);
     }
 }
 
 // ---------- Helpers ----------
 
-// Sauvegarde unique (web + Telegram) : le message utilisateur ET la réponse
-async function respond(supabaseUrl, supabaseKey, userText, botReply, lang) {
+// Sauvegarde unique (web + Telegram) PUIS envoi de la réponse JSON
+async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
@@ -338,11 +338,7 @@ async function respond(supabaseUrl, supabaseKey, userText, botReply, lang) {
             body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }])
         });
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
-    return { reply: botReply, lang };
-}
-// Petite aide pour renvoyer la réponse JSON
-function res_finish(body) {
-    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    return res.status(200).json({ reply: botReply, lang });
 }
 
 // Historique borné : 20 derniers messages, le plus récent en fin de liste
