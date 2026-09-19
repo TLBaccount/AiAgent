@@ -338,9 +338,8 @@ async function respond(supabaseUrl, supabaseKey, userText, botReply, lang) {
             body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }])
         });
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
-    return res_finish({ reply: botReply, lang });
+    return { reply: botReply, lang };
 }
-
 // Petite aide pour renvoyer la réponse JSON
 function res_finish(body) {
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
