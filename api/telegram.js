@@ -10,8 +10,6 @@ export default async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const groqKey = process.env.GROQ_API_KEY;
     const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
-    const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
-    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
     let userText = null;
     let detectedLang = null;
@@ -26,27 +24,27 @@ export default async function handler(req, res) {
             const fileInfoRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
             const fileInfo = await fileInfoRes.json();
             const filePath = fileInfo.result.file_path;
-            
+
             const audioRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
             const audioBuffer = await audioRes.arrayBuffer();
-            
+
             const formData = new FormData();
             formData.append('file', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg');
             formData.append('model', 'whisper-large-v3-turbo');
             formData.append('response_format', 'verbose_json');
-            
+
             const whisperRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${groqKey}` },
                 body: formData
             });
-            
+
             if (!whisperRes.ok) throw new Error(`Erreur Whisper: ${whisperRes.status}`);
-            
+
             const whisperData = await whisperRes.json();
             userText = whisperData.text;
             detectedLang = whisperData.language || null;
-            
+
             if (detectedLang) {
                 const l = detectedLang.toLowerCase();
                 if (l.startsWith('fr') || l === 'french') detectedLang = 'fr';
@@ -54,12 +52,12 @@ export default async function handler(req, res) {
                 else if (l.startsWith('ar') || l === 'arabic') detectedLang = 'ar';
                 else detectedLang = null;
             }
-            
+
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    chat_id: chatId, 
+                body: JSON.stringify({
+                    chat_id: chatId,
                     text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"`
                 })
             });
@@ -69,22 +67,12 @@ export default async function handler(req, res) {
 
         if (!userText || userText.trim() === "") return res.status(200).json({ ok: true });
 
-        // Récupération de l'historique complet
-        const historyRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc&limit=100`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        });
-        const historyData = await historyRes.json();
-        const history = Array.isArray(historyData) 
-            ? historyData.map(msg => ({ role: msg.role, content: msg.content }))
-            : [];
-
-        // Appel à api/chat.js
+        // Appel à api/chat.js (chat.js charge l'historique ET sauvegarde lui-même)
         const chatResponse = await fetch(`${siteUrl}/api/chat`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                message: userText, 
-                history: history,
+            headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE || "" },
+            body: JSON.stringify({
+                message: userText,
                 forcedLang: detectedLang,
                 channel: "telegram"
             })
@@ -96,26 +84,14 @@ export default async function handler(req, res) {
         const botReply = data.reply;
         const replyLang = data.lang || detectedLang || "fr";
 
-        // Sauvegarde dans Supabase
-        await fetch(`${supabaseUrl}/rest/v1/messages`, {
-            method: "POST",
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ role: "user", content: userText })
-        });
-        await fetch(`${supabaseUrl}/rest/v1/messages`, {
-            method: "POST",
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ role: "assistant", content: botReply })
-        });
-
         // Envoi de la réponse texte (avec Markdown)
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                chat_id: chatId, 
-                text: botReply, 
-                parse_mode: "Markdown" 
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: botReply,
+                parse_mode: "Markdown"
             })
         });
 
@@ -123,7 +99,7 @@ export default async function handler(req, res) {
         if (isVoice) {
             const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
             const audioResponse = await fetch(ttsUrl);
-            
+
             if (audioResponse.ok) {
                 const audioBuffer = await audioResponse.arrayBuffer();
                 const audioFormData = new FormData();
