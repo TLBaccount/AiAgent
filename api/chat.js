@@ -15,6 +15,7 @@ export default async function handler(req, res) {
     if (!checkAuth(req)) return res.status(401).json({ error: 'Accès refusé' });
 
     const { forcedLang, channel } = req.body;
+    const currentChannel = channel === "telegram" ? "telegram" : "web";
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
