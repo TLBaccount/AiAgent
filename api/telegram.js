@@ -55,7 +55,7 @@ export default async function handler(req, res) {
 
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE },
                 body: JSON.stringify({
                     chat_id: chatId,
                     text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"`
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
         try {
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE },
                 body: JSON.stringify({ chat_id: chatId, text: `❌ Erreur : ${error.message}` })
             });
         } catch (e) { console.error("Impossible d'envoyer l'erreur:", e); }
