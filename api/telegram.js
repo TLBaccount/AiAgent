@@ -146,4 +146,37 @@ export default async function handler(req, res) {
         }
 
         // Envoi de la réponse texte (avec Markdown + boutons éventuels)
-        await fetch(`https://api
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        // Envoi de la voix UNIQUEMENT si le message était vocal
+        if (isVoice) {
+            const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
+            const audioResponse = await fetch(ttsUrl);
+
+            if (audioResponse.ok) {
+                const audioBuffer = await audioResponse.arrayBuffer();
+                const audioFormData = new FormData();
+                audioFormData.append('chat_id', chatId);
+                audioFormData.append('voice', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.ogg');
+                await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: audioFormData });
+            }
+        }
+
+        return res.status(200).json({ ok: true });
+
+    } catch (error) {
+        console.error("Erreur Telegram:", error);
+        try {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chat_id: chatId, text: `❌ Erreur : ${error.message}` })
+            });
+        } catch (e) { console.error("Impossible d'envoyer l'erreur:", e); }
+        return res.status(200).json({ ok: true });
+    }
+}
