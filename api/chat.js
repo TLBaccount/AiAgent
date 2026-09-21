@@ -10,6 +10,191 @@ function checkAuth(req) {
     return req.headers['x-scoop-code'] === code;
 }
 
+// ===== TEXTES DU WORKFLOW (multilingue) =====
+const WF = {
+    fr: {
+        email: "📧 Email", calendar: "📅 Événement", share: "📊 Partage",
+        confirmQ: "Confirmez-vous l'exécution ? Répondez oui ou non.",
+        confirmed: "✅ Action exécutée avec succès !",
+        cancelled: "❌ Brouillon annulé. Rien n'a été exécuté.",
+        missing: "Il me manque :",
+        lbl: { to: "À", subject: "Sujet", body: "Message", title: "Titre", date: "Date", time: "Heure", share_type: "Type", content: "Données" },
+        fields: {
+            to: "l'adresse email du destinataire", subject: "le sujet", body: "le contenu du message",
+            title: "le titre de l'événement", date: "la date (ex: 2026-09-30)", time: "l'heure (ex: 15:00)",
+            share_type: "le type de partage (chart, json ou text)", content: "les données à partager"
+        }
+    },
+    en: {
+        email: "📧 Email", calendar: "📅 Event", share: "📊 Share",
+        confirmQ: "Do you confirm execution? Reply yes or no.",
+        confirmed: "✅ Action executed successfully!",
+        cancelled: "❌ Draft cancelled. Nothing was executed.",
+        missing: "I still need:",
+        lbl: { to: "To", subject: "Subject", body: "Message", title: "Title", date: "Date", time: "Time", share_type: "Type", content: "Data" },
+        fields: {
+            to: "the recipient's email address", subject: "the subject", body: "the message content",
+            title: "the event title", date: "the date (e.g. 2026-09-30)", time: "the time (e.g. 15:00)",
+            share_type: "the share type (chart, json or text)", content: "the data to share"
+        }
+    },
+    ar: {
+        email: "📧 بريد إلكتروني", calendar: "📅 حدث", share: "📊 مشاركة",
+        confirmQ: "هل تؤكد التنفيذ؟ أجب بـ نعم أو لا.",
+        confirmed: "✅ تم تنفيذ العملية بنجاح!",
+        cancelled: "❌ تم إلغاء المسودة. لم يتم تنفيذ شيء.",
+        missing: "ما زال ينقصني:",
+        lbl: { to: "إلى", subject: "الموضوع", body: "الرسالة", title: "العنوان", date: "التاريخ", time: "الوقت", share_type: "النوع", content: "البيانات" },
+        fields: {
+            to: "البريد الإلكتروني للمستلم", subject: "الموضوع", body: "محتوى الرسالة",
+            title: "عنوان الحدث", date: "التاريخ (مثال: 2026-09-30)", time: "الوقت (مثال: 15:00)",
+            share_type: "نوع المشاركة (chart أو json أو text)", content: "البيانات للمشاركة"
+        }
+    }
+};
+
+const REQUIRED_FIELDS = {
+    email: ["to", "subject", "body"],
+    calendar: ["title", "date", "time"],
+    share: ["share_type", "content"]
+};
+
+function missingFields(type, payload) {
+    return (REQUIRED_FIELDS[type] || []).filter(f => !payload[f] || !String(payload[f]).trim());
+}
+
+function buildSummary(actionType, payload, lang) {
+    const t = WF[lang] || WF.fr;
+    const kind = t[actionType] || actionType;
+    let lines = [];
+    if (actionType === "email") {
+        lines.push(`• ${t.lbl.to} : ${payload.to || ""}`);
+        lines.push(`• ${t.lbl.subject} : ${payload.subject || ""}`);
+        lines.push(`• ${t.lbl.body} : ${String(payload.body || "").substring(0, 150)}`);
+    } else if (actionType === "calendar") {
+        lines.push(`• ${t.lbl.title} : ${payload.title || ""}`);
+        lines.push(`• ${t.lbl.date} : ${payload.date || ""}`);
+        lines.push(`• ${t.lbl.time} : ${payload.time || ""}`);
+    } else if (actionType === "share") {
+        lines.push(`• ${t.lbl.share_type} : ${payload.share_type || ""}`);
+        lines.push(`• ${t.lbl.content} : ${String(payload.content || "").substring(0, 100)}`);
+    }
+    return `${kind}\n${lines.join("\n")}\n\n${t.confirmQ}`;
+}
+
+function askMissing(actionType, payload, lang) {
+    const t = WF[lang] || WF.fr;
+    const missing = missingFields(actionType, payload);
+    if (missing.length === 0) return buildSummary(actionType, payload, lang);
+    const list = missing.map(f => t.fields[f]).join(", ");
+    return `📝 ${t.missing} ${list}\n👉 ${t.fields[missing[0]]} ?`;
+}
+
+function isConfirmation(text) {
+    return /^\s*(oui|yes|ok|d'accord|daccord|valide|validé|valider|confirme|confirmé|confirmer|confirm|go|exécute|execute)\s*[!.؟?]*\s*$/i.test(text.trim());
+}
+
+function isCancellation(text) {
+    return /^\s*(non|no|annule|annuler|annulé|cancel|stop|abandonne|abandonner|arrête|arrete)\s*[!.؟?]*\s*$/i.test(text.trim());
+}
+
+// ===== CRUD BROUILLONS (pending_actions) =====
+async function getPendingAction(supabaseUrl, supabaseKey) {
+    try {
+        const res = await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft&order=id.desc&limit=1`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) return null;
+        const row = data[0];
+        const age = Date.now() - new Date(row.updated_at).getTime();
+        if (age > 24 * 60 * 60 * 1000) { // expiration 24h
+            await deletePendingAction(supabaseUrl, supabaseKey, row.id);
+            return null;
+        }
+        return row;
+    } catch (e) { return null; }
+}
+
+async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) {
+    try {
+        // Un seul brouillon actif : on supprime les anciens
+        await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft`, {
+            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        await fetch(`${supabaseUrl}/rest/v1/pending_actions`, {
+            method: "POST",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft" })
+        });
+    } catch (e) { console.error("Erreur savePendingAction:", e.message); }
+}
+
+async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
+    try {
+        await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
+            method: "PATCH",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ payload: payload, updated_at: new Date().toISOString() })
+        });
+    } catch (e) { console.error("Erreur updatePendingAction:", e.message); }
+}
+
+async function deletePendingAction(supabaseUrl, supabaseKey, id) {
+    try {
+        await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
+            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+    } catch (e) { console.error("Erreur deletePendingAction:", e.message); }
+}
+
+// ===== EXÉCUTION (UNIQUEMENT après confirmation serveur) =====
+async function executeWorkflowAction(actionType, payload) {
+    try {
+        if (actionType === "email") {
+            const url = process.env.ACTIVEPIECES_EMAIL_URL;
+            if (!url) return { ok: false, error: "URL email non configurée" };
+            const r = await fetch(url, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: { to: payload.to, subject: payload.subject, body: payload.body }, type: "email", user: agentName })
+            });
+            let d = null; try { d = await r.json(); } catch (e) {}
+            return { ok: r.ok, result: (d && d.result) || null };
+        }
+        if (actionType === "calendar") {
+            const url = process.env.ACTIVEPIECES_CALENDAR_URL;
+            if (!url) return { ok: false, error: "URL calendrier non configurée" };
+            const r = await fetch(url, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: { title: payload.title, date: payload.date, time: payload.time }, type: "calendar", user: agentName })
+            });
+            let d = null; try { d = await r.json(); } catch (e) {}
+            return { ok: r.ok, result: (d && d.result) || null };
+        }
+        if (actionType === "share") {
+            let parsed;
+            try { parsed = JSON.parse(payload.content); } catch (e) { return { ok: false, error: "Données invalides (JSON)" }; }
+            const r = await fetch(`${siteUrl}/api/share`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: payload.share_type, data: parsed, title: payload.title || "" })
+            });
+            const d = await r.json();
+            if (d.share_url) {
+                const s = await fetch(`${siteUrl}/api/shorten`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: d.share_url })
+                });
+                const sd = await s.json();
+                return { ok: true, result: `Lien ${d.tool} : ${sd.short_url || d.share_url}` };
+            }
+            return { ok: false, error: d.error || "Échec du partage" };
+        }
+        return { ok: false, error: "Type d'action inconnu" };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     if (!checkAuth(req)) return res.status(401).json({ error: 'Accès refusé' });
@@ -20,10 +205,6 @@ export default async function handler(req, res) {
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-
-    const URL_CALENDAR = process.env.ACTIVEPIECES_CALENDAR_URL;
-    const URL_EMAIL = process.env.ACTIVEPIECES_EMAIL_URL;
-    const URL_SEARCH = process.env.ACTIVEPIECES_SEARCH_URL;
 
     await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
@@ -52,7 +233,7 @@ export default async function handler(req, res) {
         return respond(res, supabaseUrl, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
     }
 
-    // Mots-clés Memo / Val (regex unicode : n'attrape pas "Valérie" ni "évaluer")
+    // Mots-clés Memo / Val
     const kwRegex = /(?<![\p{L}\p{N}_])(memo|val)(?![\p{L}\p{N}_])/giu;
     const kwMatches = userMessage.match(kwRegex) || [];
     const hasMemoKeyword = kwMatches.some(w => w.toLowerCase() === 'memo');
@@ -68,7 +249,7 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique chargée côté serveur (20 derniers messages)
+    // Historique côté serveur (20 derniers messages)
     let fullHistory = [];
     try {
         const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20`, {
@@ -84,6 +265,28 @@ export default async function handler(req, res) {
             await extractSecrets(userMessage, "", supabaseUrl, supabaseKey, forceSecret);
         }
 
+        // ===== WORKFLOW : BROUILLON EN COURS ? =====
+        const pending = await getPendingAction(supabaseUrl, supabaseKey);
+        const t = WF[currentLang] || WF.fr;
+
+        // 1) ANNULATION (décidée par le SERVEUR, pas le LLM)
+        if (pending && isCancellation(userMessage)) {
+            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+            return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
+        }
+
+        // 2) CONFIRMATION (décidée par le SERVEUR, pas le LLM)
+        if (pending && isConfirmation(userMessage)) {
+            const missing = missingFields(pending.action_type, pending.payload || {});
+            if (missing.length > 0) {
+                return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
+            }
+            const exec = await executeWorkflowAction(pending.action_type, pending.payload || {});
+            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+            const reply = exec.ok ? (exec.result ? `✅ ${exec.result}` : t.confirmed) : `❌ ${exec.error || "Échec de l'action."}`;
+            return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
+        }
+
         const formatRules = currentChannel === "telegram"
             ? `
 RÈGLE DE FORMATAGE POUR TELEGRAM (TRÈS STRICTE) :
@@ -97,10 +300,16 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 - Tu peux utiliser des tableaux Markdown (| |), des titres (###), du gras (**).
 - Utilise des listes à puces et des sauts de ligne.`;
 
+        const workflowRules = `
+RÈGLE ABSOLUE DES ACTIONS (WORKFLOW) :
+- send_email / create_event / share_data ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
+- Pose UNE SEULE question à la fois pour obtenir les champs manquants. N'invente JAMAIS une valeur.
+- Le système affiche le résumé et demande la confirmation (oui/non) : géré automatiquement.
+- Les confirmations et annulations ("oui", "non", "annule") sont gérées par le système : ne les traite pas toi-même.`;
+
         const dataShareRules = `
-🎯 RÈGLE ABSOLUE POUR "share_data" :
-Tu ne dois utiliser l'outil "share_data" QUE si l'utilisateur demande EXPLICITEMENT un tableau, un graphique ou un partage (mots-clés : "tableau", "csv", "graphique", "camembert", "partage", "lien", "export").
-Pour une liste, une recette ou une explication → TEXTE NORMAL.
+🎯 RÈGLE POUR "share_data" :
+Tu ne dois proposer un partage QUE si l'utilisateur demande EXPLICITEMENT un tableau, un graphique ou un partage (mots-clés : "tableau", "csv", "graphique", "camembert", "partage", "lien", "export").
 FORMAT (data_json = chaîne JSON) :
 - "chart" : {"chartType": "bar", "labels": ["Jan"], "datasets": [{"label": "Ventes", "data": [10]}]}
 - "json" : {"headers": ["Col1"], "rows": [["a"]]}
@@ -117,10 +326,11 @@ RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
 - Si le message en contient un → CONFIRME l'enregistrement SANS répéter le mot-clé.
 
 RÈGLE DES OUTILS :
-- send_email : UNIQUEMENT si "envoie un email à X".
-- create_event : UNIQUEMENT si "ajoute un événement".
-- search_web : UNIQUEMENT si "cherche", "recherche".
-- share_data : UNIQUEMENT si demande EXPLICITE de tableau/graphique/partage.
+- send_email : UNIQUEMENT si "envoie un email à X" (crée un brouillon).
+- create_event : UNIQUEMENT si "ajoute un événement" (crée un brouillon).
+- search_web : UNIQUEMENT si "cherche", "recherche" (exécution directe, lecture seule).
+- shorten_url : raccourcit une URL.
+- share_data : UNIQUEMENT si demande EXPLICITE de tableau/graphique/partage (crée un brouillon).
 - "mon adresse mail est X" → NE PAS appeler send_email.
 - Ne mélange JAMAIS les langues.
 
@@ -133,35 +343,61 @@ ${publicText}
 
 SECRETS (protégés par "Scoop") :
 ${privateText}
+${workflowRules}
 ${dataShareRules}
 ${formatRules}`;
 
+        // Prompt spécial mode brouillon (l'utilisateur complète/modifie)
+        const draftPrompt = pending ? `Tu es Scoop. Un BROUILLON est en cours : ${pending.action_type}.
+Données actuelles du brouillon : ${JSON.stringify(pending.payload || {})}
+Champs obligatoires : ${(REQUIRED_FIELDS[pending.action_type] || []).join(", ")}
+
+TON RÔLE :
+- Si l'utilisateur fournit une info ou modifie quelque chose → appelle l'outil draft_action avec TOUS les champs qu'il donne.
+- N'invente JAMAIS une valeur manquante.
+- Si l'utilisateur pose une question sur le brouillon → réponds en texte, sans outil.
+- La confirmation ("oui") et l'annulation sont gérées automatiquement par le système.
+- Pose UNE SEULE question à la fois.
+- Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
+- Ne répète jamais les mots-clés Memo/Val.` : null;
+
         const tools = [
-            { type: "function", function: { name: "send_email", description: "Envoie un email UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: ["to", "subject", "body"] } } },
-            { type: "function", function: { name: "create_event", description: "Crée un événement UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: ["title", "date", "time"] } } },
+            { type: "function", function: { name: "send_email", description: "Crée un BROUILLON d'email (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: [] } } },
+            { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
-            { type: "function", function: { name: "share_data", description: "Partage des données UNIQUEMENT si demande explicite de tableau/graphique/partage.", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string" }, data_json: { type: "string" } }, required: ["type", "data_json"] } } }
+            { type: "function", function: { name: "share_data", description: "Crée un BROUILLON de partage (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string" }, data_json: { type: "string" } }, required: [] } } }
         ];
+
+        const draftTools = [
+            { type: "function", function: { name: "draft_action", description: "Met à jour le brouillon en cours avec les informations fournies par l'utilisateur.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, title: { type: "string" }, date: { type: "string" }, time: { type: "string" }, share_type: { type: "string" }, content: { type: "string" } }, required: [] } } },
+            { type: "function", function: { name: "cancel_action", description: "Annule le brouillon en cours.", parameters: { type: "object", properties: {}, required: [] } } }
+        ];
+
+        const activePrompt = pending ? draftPrompt : systemPrompt;
+        const activeTools = pending ? draftTools : tools;
+        const langName = currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
 
         let response = null;
         let provider = null;
 
-        // TENTATIVE 1 : GEMINI
-        const geminiKey = process.env.GOOGLE_AI_KEY;
-        if (geminiKey) {
-            try {
-                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        contents: [{ role: "user", parts: [{ text: userMessage }] }],
-                        systemInstruction: { parts: [{ text: systemPrompt }] }
-                    })
-                });
-                if (response.ok) provider = "Gemini";
-                else { console.error(`Gemini a échoué (${response.status})`); response = null; }
-            } catch (e) { console.error("Erreur Gemini:", e.message); response = null; }
+        // TENTATIVE 1 : GEMINI (seulement hors brouillon — pas de tools)
+        if (!pending) {
+            const geminiKey = process.env.GOOGLE_AI_KEY;
+            if (geminiKey) {
+                try {
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            contents: [{ role: "user", parts: [{ text: userMessage }] }],
+                            systemInstruction: { parts: [{ text: activePrompt }] }
+                        })
+                    });
+                    if (response.ok) provider = "Gemini";
+                    else { console.error(`Gemini a échoué (${response.status})`); response = null; }
+                } catch (e) { console.error("Erreur Gemini:", e.message); response = null; }
+            }
         }
 
         // TENTATIVE 2 : GROQ
@@ -174,8 +410,8 @@ ${formatRules}`;
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
                         body: JSON.stringify({
                             model: "openai/gpt-oss-20b",
-                            messages: [{ role: "system", content: systemPrompt }, ...fullHistory, { role: "user", content: userMessage }],
-                            tools: tools,
+                            messages: [{ role: "system", content: activePrompt }, ...fullHistory, { role: "user", content: userMessage }],
+                            tools: activeTools,
                             tool_choice: "auto"
                         })
                     });
@@ -195,8 +431,8 @@ ${formatRules}`;
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openrouterKey}` },
                         body: JSON.stringify({
                             model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
-                            messages: [{ role: "system", content: systemPrompt }, ...fullHistory, { role: "user", content: userMessage }],
-                            tools: tools,
+                            messages: [{ role: "system", content: activePrompt }, ...fullHistory, { role: "user", content: userMessage }],
+                            tools: activeTools,
                             tool_choice: "auto"
                         })
                     });
@@ -223,102 +459,79 @@ ${formatRules}`;
                 let functionArgs = {};
                 try { functionArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch (e) {}
 
-                if (functionName === "shorten_url") {
-                    const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ url: functionArgs.url })
-                    });
-                    const shortenData = await shortenRes.json();
-                    return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
-                }
-
-                if (functionName === "share_data") {
-                    let parsedData;
-                    try {
-                        let jsonText = String(functionArgs.data_json || "").trim();
-                        const start = jsonText.indexOf('{');
-                        const end = jsonText.lastIndexOf('}');
-                        if (start !== -1 && end !== -1 && end > start) jsonText = jsonText.substring(start, end + 1);
-                        parsedData = JSON.parse(jsonText);
-                    } catch (e) {
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Erreur de format des données : ${e.message}`, currentLang);
+                // ===== MODE BROUILLON : draft_action / cancel_action =====
+                if (pending) {
+                    if (functionName === "cancel_action") {
+                        await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
                     }
-                    const shareRes = await fetch(`${siteUrl}/api/share`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ type: functionArgs.type, data: parsedData, title: functionArgs.title || "" })
-                    });
-                    const shareData = await shareRes.json();
-                    if (shareData.share_url) {
+                    if (functionName === "draft_action") {
+                        const newPayload = { ...(pending.payload || {}) };
+                        for (const [k, v] of Object.entries(functionArgs)) {
+                            if (v && String(v).trim()) newPayload[k] = String(v).trim();
+                        }
+                        await updatePendingAction(supabaseUrl, supabaseKey, pending.id, newPayload);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, newPayload, currentLang), currentLang);
+                    }
+                    botText = String(responseMessage.content || "").trim();
+                } else {
+                    // ===== MODE NORMAL =====
+                    if (functionName === "shorten_url") {
                         const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ url: shareData.share_url })
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ url: functionArgs.url })
                         });
                         const shortenData = await shortenRes.json();
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien ${shareData.tool} : ${shortenData.short_url || shareData.share_url}`, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
                     }
-                    return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Impossible de partager : ${shareData.error}`, currentLang);
-                }
 
-                let activepiecesUrl = null;
-                let actionType = null;
-                if (functionName === "send_email") { activepiecesUrl = URL_EMAIL; actionType = "email"; }
-                else if (functionName === "create_event") { activepiecesUrl = URL_CALENDAR; actionType = "calendar"; }
-                else if (functionName === "search_web") { activepiecesUrl = URL_SEARCH; actionType = "search"; }
-
-                // RECHERCHE : Tavily en direct (résultats réels), fallback Activepieces
-                if (actionType === "search" && process.env.TAVILY_API_KEY) {
-                    try {
-                        const tavilyRes = await fetch("https://api.tavily.com/search", {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Authorization": `Bearer ${process.env.TAVILY_API_KEY}`
-                            },
-                            body: JSON.stringify({ query: functionArgs.query || userMessage, max_results: 4, search_depth: "basic" })
-                        });
-                        if (tavilyRes.ok) {
-                            const tavilyData = await tavilyRes.json();
-                            const results = tavilyData.results || [];
-                            let replyText;
-                            if (results.length > 0) {
-                                const labels = { fr: "🔎 Résultats pour", en: "🔎 Results for", ar: "🔎 نتائج البحث عن" };
-                                const label = labels[currentLang] || labels.fr;
-                                const top = results.map((r, i) => {
-                                    const snippet = String(r.content || "").replace(/\s+/g, " ").substring(0, 180).trim();
-                                    return `${i + 1}. ${r.title || "Lien"}\n${snippet}\n${r.url}`;
-                                }).join("\n\n");
-                                replyText = `${label} « ${functionArgs.query || userMessage} » :\n\n${top}`;
-                            } else {
-                                replyText = currentLang === "en" ? "🔎 No results found." : currentLang === "ar" ? "🔎 لا توجد نتائج." : "🔎 Aucun résultat trouvé.";
+                    // RECHERCHE : Tavily direct (lecture seule, exécution immédiate)
+                    if (functionName === "search_web" && process.env.TAVILY_API_KEY) {
+                        try {
+                            const tavilyRes = await fetch("https://api.tavily.com/search", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.TAVILY_API_KEY}` },
+                                body: JSON.stringify({ query: functionArgs.query || userMessage, max_results: 4, search_depth: "basic" })
+                            });
+                            if (tavilyRes.ok) {
+                                const tavilyData = await tavilyRes.json();
+                                const results = tavilyData.results || [];
+                                let replyText;
+                                if (results.length > 0) {
+                                    const labels = { fr: "🔎 Résultats pour", en: "🔎 Results for", ar: "🔎 نتائج البحث عن" };
+                                    const label = labels[currentLang] || labels.fr;
+                                    const top = results.map((r, i) => {
+                                        const snippet = String(r.content || "").replace(/\s+/g, " ").substring(0, 180).trim();
+                                        return `${i + 1}. ${r.title || "Lien"}\n${snippet}\n${r.url}`;
+                                    }).join("\n\n");
+                                    replyText = `${label} « ${functionArgs.query || userMessage} » :\n\n${top}`;
+                                } else {
+                                    replyText = currentLang === "en" ? "🔎 No results found." : currentLang === "ar" ? "🔎 لا توجد نتائج." : "🔎 Aucun résultat trouvé.";
+                                }
+                                return respond(res, supabaseUrl, supabaseKey, userMessage, replyText, currentLang);
                             }
-                            return respond(res, supabaseUrl, supabaseKey, userMessage, replyText, currentLang);
-                        }
-                    } catch (e) { console.error("Erreur Tavily:", e.message); }
-                }
+                        } catch (e) { console.error("Erreur Tavily:", e.message); }
+                    }
 
-                if (activepiecesUrl) {
-                    try {
-                        const apResponse = await fetch(activepiecesUrl, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ action: functionArgs, type: actionType, user: agentName })
-                        });
-                        let apData = null;
-                        try { apData = await apResponse.json(); } catch (e) {}
-
-                        if (actionType === "search" && Array.isArray(apData && apData.results) && apData.results.length > 0) {
-                            const top = apData.results.map((r, i) => `${i + 1}. ${r.title || "Lien"}\n${r.url}`).join("\n\n");
-                            return respond(res, supabaseUrl, supabaseKey, userMessage, `🔎 Résultats :\n\n${top}`, currentLang);
+                    // ===== ACTIONS : CRÉATION DE BROUILLON (jamais d'exécution directe) =====
+                    let draftType = null;
+                    let draftPayload = {};
+                    if (functionName === "send_email") {
+                        draftType = "email";
+                        draftPayload = { to: functionArgs.to || "", subject: functionArgs.subject || "", body: functionArgs.body || "" };
+                    } else if (functionName === "create_event") {
+                        draftType = "calendar";
+                        draftPayload = { title: functionArgs.title || "", date: functionArgs.date || "", time: functionArgs.time || "" };
+                    } else if (functionName === "share_data") {
+                        draftType = "share";
+                        draftPayload = { share_type: functionArgs.type || "", content: functionArgs.data_json || "", title: functionArgs.title || "" };
+                    }
+                    if (draftType) {
+                        for (const k of Object.keys(draftPayload)) {
+                            if (!draftPayload[k]) delete draftPayload[k];
                         }
-                        if (apData && apData.result) {
-                            return respond(res, supabaseUrl, supabaseKey, userMessage, `✅ ${apData.result}`, currentLang);
-                        }
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, `✅ Action "${actionType}" exécutée !`, currentLang);
-                    } catch (e) {
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ L'action "${actionType}" a échoué.`, currentLang);
+                        await savePendingAction(supabaseUrl, supabaseKey, draftType, draftPayload);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(draftType, draftPayload, currentLang), currentLang);
                     }
                 }
             }
