@@ -3,7 +3,55 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
     }
 
-    const { message } = req.body;
+    const update = req.body;
+
+    // ===== 🆕 GESTION DES BOUTONS (callback_query) =====
+    if (update.callback_query) {
+        const cq = update.callback_query;
+        const chatId = cq.message.chat.id;
+        const messageId = cq.message.message_id;
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
+        const data = cq.data || "";
+
+        // 1. Stoppe le "chargement" du bouton
+        await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: cq.id })
+        }).catch(() => {});
+
+        // 2. Retire les boutons du message original (anti double-clic)
+        await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } })
+        }).catch(() => {});
+
+        // 3. Traduit le clic en message que chat.js comprend déjà
+        const actionText = data === "wf_confirm" ? "oui" : data === "wf_cancel" ? "annule" : null;
+        if (!actionText) return res.status(200).json({ ok: true });
+
+        try {
+            const chatResponse = await fetch(`${siteUrl}/api/chat`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE || "" },
+                body: JSON.stringify({ message: actionText, channel: "telegram" })
+            });
+            let replyText = "❌ Erreur interne.";
+            if (chatResponse.ok) {
+                const d = await chatResponse.json();
+                replyText = d.reply || replyText;
+            }
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chat_id: chatId, text: replyText, parse_mode: "Markdown" })
+            });
+        } catch (e) {
+            console.error("Erreur callback:", e.message);
+        }
+        return res.status(200).json({ ok: true });
+    }
+
+    const message = update.message;
     if (!message) return res.status(200).json({ ok: true });
 
     const chatId = message.chat.id;
@@ -55,7 +103,7 @@ export default async function handler(req, res) {
 
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     chat_id: chatId,
                     text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"`
@@ -84,42 +132,18 @@ export default async function handler(req, res) {
         const botReply = data.reply;
         const replyLang = data.lang || detectedLang || "fr";
 
-        // Envoi de la réponse texte (avec Markdown)
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                chat_id: chatId,
-                text: botReply,
-                parse_mode: "Markdown"
-            })
-        });
+        // ===== 🆕 BOUTONS si résumé de confirmation détecté =====
+        const needsButtons = /oui ou non|yes or no|نعم أو لا/.test(botReply);
 
-        // Envoi de la voix UNIQUEMENT si le message était vocal
-        if (isVoice) {
-            const ttsUrl = `${siteUrl}/api/tts?text=${encodeURIComponent(botReply)}&lang=${replyLang}`;
-            const audioResponse = await fetch(ttsUrl);
-
-            if (audioResponse.ok) {
-                const audioBuffer = await audioResponse.arrayBuffer();
-                const audioFormData = new FormData();
-                audioFormData.append('chat_id', chatId);
-                audioFormData.append('voice', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'scoop_reply.ogg');
-                await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: audioFormData });
-            }
+        const payload = { chat_id: chatId, text: botReply, parse_mode: "Markdown" };
+        if (needsButtons) {
+            payload.reply_markup = {
+                inline_keyboard: [[
+                    { text: "✅ Confirmer", callback_data: "wf_confirm" },
+                    { text: "❌ Annuler", callback_data: "wf_cancel" }
+                ]]
+            };
         }
 
-        return res.status(200).json({ ok: true });
-
-    } catch (error) {
-        console.error("Erreur Telegram:", error);
-        try {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE },
-                body: JSON.stringify({ chat_id: chatId, text: `❌ Erreur : ${error.message}` })
-            });
-        } catch (e) { console.error("Impossible d'envoyer l'erreur:", e); }
-        return res.status(200).json({ ok: true });
-    }
-}
+        // Envoi de la réponse texte (avec Markdown + boutons éventuels)
+        await fetch(`https://api
