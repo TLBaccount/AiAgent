@@ -42,19 +42,22 @@ export default async function handler(req, res) {
 
     const kind = (req.body && req.body.kind) === 'briefing' ? 'briefing' : 'joke';
     const chatId = process.env.TELEGRAM_CHAT_ID;
-    if (!chatId) return res.status(200).json({ ok: false, reason: 'TELEGRAM_CHAT_ID manquant' });
+    if (!chatId) return res.status(200).json({ ok: false, error: 'TELEGRAM_CHAT_ID manquant' });
 
-    // Heures silencieuses : pas de blague entre 22h et 8h (heure algérienne)
-    const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'Africa/Algiers', hour: '2-digit', hour12: false }));
-    if (kind === 'joke' && (hour >= 22 || hour < 8)) return res.status(200).json({ ok: true, skipped: 'heures silencieuses' });
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return res.status(200).json({ ok: false, error: 'TELEGRAM_BOT_TOKEN manquant' });
 
     const weather = kind === 'briefing' ? await getWeather() : null;
     const text = await generate(kind, weather);
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text: `🤖 ${text}` })
-    });
-    return res.status(200).json({ ok: true });
+    try {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: text })
+        });
+        return res.status(200).json({ ok: true, kind: kind });
+    } catch (e) {
+        return res.status(200).json({ ok: false, error: e.message });
+    }
 }
