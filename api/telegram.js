@@ -55,6 +55,7 @@ export default async function handler(req, res) {
     if (!message) return res.status(200).json({ ok: true });
 
     const chatId = message.chat.id;
+    console.log("TELEGRAM_CHAT_ID:", chatId);
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const groqKey = process.env.GROQ_API_KEY;
     const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
