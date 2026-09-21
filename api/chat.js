@@ -21,7 +21,7 @@ const WF = {
         lbl: { to: "À", subject: "Sujet", body: "Message", title: "Titre", date: "Date", time: "Heure", share_type: "Type", content: "Données" },
         fields: {
             to: "l'adresse email du destinataire", subject: "le sujet", body: "le contenu du message",
-            title: "le titre de l'événement", date: "la date (ex: 2026-09-30)", time: "l'heure (ex: 15:00)",
+            title: "le titre de l'événement", date: "la date (ex: 30-09-26)", time: "l'heure (ex: 15:00)",
             share_type: "le type de partage (chart, json ou text)", content: "les données à partager"
         }
     },
@@ -34,7 +34,7 @@ const WF = {
         lbl: { to: "To", subject: "Subject", body: "Message", title: "Title", date: "Date", time: "Time", share_type: "Type", content: "Data" },
         fields: {
             to: "the recipient's email address", subject: "the subject", body: "the message content",
-            title: "the event title", date: "the date (e.g. 2026-09-30)", time: "the time (e.g. 15:00)",
+            title: "the event title", date: "the date (e.g. 30-09-26)", time: "the time (e.g. 15:00)",
             share_type: "the share type (chart, json or text)", content: "the data to share"
         }
     },
@@ -47,7 +47,7 @@ const WF = {
         lbl: { to: "إلى", subject: "الموضوع", body: "الرسالة", title: "العنوان", date: "التاريخ", time: "الوقت", share_type: "النوع", content: "البيانات" },
         fields: {
             to: "البريد الإلكتروني للمستلم", subject: "الموضوع", body: "محتوى الرسالة",
-            title: "عنوان الحدث", date: "التاريخ (مثال: 2026-09-30)", time: "الوقت (مثال: 15:00)",
+            title: "عنوان الحدث", date: "التاريخ (مثال: 30-09-26)", time: "الوقت (مثال: 15:00)",
             share_type: "نوع المشاركة (chart أو json أو text)", content: "البيانات للمشاركة"
         }
     }
@@ -58,6 +58,22 @@ const REQUIRED_FIELDS = {
     calendar: ["title", "date", "time"],
     share: ["share_type", "content"]
 };
+
+// Convertit une date saisie (30-09-26, 30/09/2026, 30.09.26, 2026-09-30) en YYYY-MM-DD pour Google Calendar
+function normalizeDate(d) {
+    if (!d) return d;
+    const s = String(d).trim();
+    let m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2}|\d{4})$/);
+    if (m) {
+        const dd = m[1].padStart(2, "0");
+        const mm = m[2].padStart(2, "0");
+        const yyyy = m[3].length === 2 ? "20" + m[3] : m[3];
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+    if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+    return s;
+}
 
 function missingFields(type, payload) {
     return (REQUIRED_FIELDS[type] || []).filter(f => !payload[f] || !String(payload[f]).trim());
@@ -166,7 +182,7 @@ async function executeWorkflowAction(actionType, payload) {
             if (!url) return { ok: false, error: "URL calendrier non configurée" };
             const r = await fetch(url, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: { title: payload.title, date: payload.date, time: payload.time }, type: "calendar", user: agentName })
+                body: JSON.stringify({ action: { title: payload.title, date: normalizeDate(payload.date), time: payload.time }, type: "calendar", user: agentName })
             });
             let d = null; try { d = await r.json(); } catch (e) {}
             return { ok: r.ok, result: (d && d.result) || null };
@@ -303,6 +319,7 @@ RÈGLE DE FORMATAGE POUR LE WEB :
         const workflowRules = `
 RÈGLE ABSOLUE DES ACTIONS (WORKFLOW) :
 - send_email / create_event / share_data ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
+- Pour les dates, DEMANDE à l'utilisateur le format JJ-MM-AA (ex: 30-09-26).
 - Pose UNE SEULE question à la fois pour obtenir les champs manquants. N'invente JAMAIS une valeur.
 - Le système affiche le résumé et demande la confirmation (oui/non) : géré automatiquement.
 - Les confirmations et annulations ("oui", "non", "annule") sont gérées par le système : ne les traite pas toi-même.`;
@@ -363,7 +380,7 @@ TON RÔLE :
 
         const tools = [
             { type: "function", function: { name: "send_email", description: "Crée un BROUILLON d'email (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: [] } } },
-            { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
+            { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise). Date au format JJ-MM-AA.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
             { type: "function", function: { name: "share_data", description: "Crée un BROUILLON de partage (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string" }, data_json: { type: "string" } }, required: [] } } }
