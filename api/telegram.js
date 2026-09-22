@@ -56,6 +56,27 @@ export default async function handler(req, res) {
     const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
     const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+    // ===== PHOTOS 📸 : Scoop regarde et répond =====
+    if (message.photo && message.photo.length > 0) {
+        const best = message.photo[message.photo.length - 1];
+        let reply = "❌ Je n'ai pas pu analyser la photo.";
+        try {
+            const vRes = await fetch(`${siteUrl}/api/vision`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE || "" },
+                body: JSON.stringify({ fileId: best.file_id, caption: message.caption || "", channel: "telegram" })
+            });
+            if (vRes.ok) {
+                const vData = await vRes.json();
+                if (vData.reply) reply = vData.reply;
+            }
+        } catch (e) { console.error("Erreur vision:", e.message); }
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: reply })
+        });
+        return res.status(200).json({ ok: true });
+    }
 
     let userText = null;
     let detectedLang = null;
