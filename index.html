@@ -197,10 +197,10 @@
             chatDiv.scrollTop = chatDiv.scrollHeight;
         }
 
-        // 1. Charger l'historique via l'API protégée (plus de clé publique !)
+        // 1. Charger l'historique via l'API protégée (canal web uniquement)
         async function loadHistory() {
             try {
-                const response = await fetch("/api/history", {
+                const response = await fetch("/api/history?channel=web", {
                     headers: { "x-scoop-code": SCOOP_CODE }
                 });
                 if (response.status === 401) { handleBadCode(); return; }
