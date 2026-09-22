@@ -26,7 +26,7 @@ async function generate(kind, weatherStr) {
     const groqKey = process.env.GROQ_API_KEY;
     const now = new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Algiers', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
     const fallback = kind === 'briefing'
-        ? `☀️ Bonjour !\n${weatherStr || "Météo momentanément indisponible."}\nBelle journée !`
+        ? `☀️ Bonjour Fateh !\n${weatherStr || "Météo momentanément indisponible."}\nBelle journée à toi !`
         : "💪 Garde le sourire, chaque jour compte !";
     if (!groqKey) return fallback;
     const prompts = {
