@@ -5,9 +5,12 @@ export default async function handler(req, res) {
     const code = process.env.SCOOP_WEB_CODE;
     if (code && req.headers['x-scoop-code'] !== code) return res.status(401).json({ error: 'Accès refusé' });
 
+    const url = new URL(req.url, "http://localhost");
+    const ch = url.searchParams.get("channel") === "telegram" ? "telegram" : "web";
+
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
     try {
-        const r = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=100`, {
+        const r = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=100&channel=eq.${ch}`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const data = await r.json();
