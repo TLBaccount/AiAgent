@@ -217,6 +217,7 @@ export default async function handler(req, res) {
 
     const { forcedLang, channel } = req.body;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
+    res.scoopChannel = currentChannel; // 🆕 canal mémorisé pour la sauvegarde
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
@@ -265,10 +266,10 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique côté serveur (20 derniers messages)
+    // Historique côté serveur (20 derniers messages DU CANAL) 🆕
     let fullHistory = [];
     try {
-        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20`, {
+        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20&channel=eq.${currentChannel}`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const hData = await hRes.json();
@@ -571,13 +572,16 @@ TON RÔLE :
     }
 }
 
-// Sauvegarde unique (user + assistant) puis réponse
+// Sauvegarde unique (user + assistant) puis réponse — avec canal 🆕
 async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }])
+            body: JSON.stringify([
+                { role: "user", content: userText, channel: res.scoopChannel || "web" },
+                { role: "assistant", content: botReply, channel: res.scoopChannel || "web" }
+            ])
         });
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
     return res.status(200).json({ reply: botReply, lang });
