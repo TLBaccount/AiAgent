@@ -5,7 +5,7 @@ export default async function handler(req, res) {
 
     const update = req.body;
 
-    // ===== 🆕 GESTION DES BOUTONS (callback_query) =====
+    // ===== GESTION DES BOUTONS (callback_query) =====
     if (update.callback_query) {
         const cq = update.callback_query;
         const chatId = cq.message.chat.id;
@@ -14,19 +14,16 @@ export default async function handler(req, res) {
         const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
         const data = cq.data || "";
 
-        // 1. Stoppe le "chargement" du bouton
         await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ callback_query_id: cq.id })
         }).catch(() => {});
 
-        // 2. Retire les boutons du message original (anti double-clic)
         await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } })
         }).catch(() => {});
 
-        // 3. Traduit le clic en message que chat.js comprend déjà
         const actionText = data === "wf_confirm" ? "oui" : data === "wf_cancel" ? "annule" : null;
         if (!actionText) return res.status(200).json({ ok: true });
 
@@ -45,9 +42,7 @@ export default async function handler(req, res) {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: chatId, text: replyText, parse_mode: "Markdown" })
             });
-        } catch (e) {
-            console.error("Erreur callback:", e.message);
-        }
+        } catch (e) { console.error("Erreur callback:", e.message); }
         return res.status(200).json({ ok: true });
     }
 
@@ -59,6 +54,8 @@ export default async function handler(req, res) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const groqKey = process.env.GROQ_API_KEY;
     const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
+    const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
+    const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
     let userText = null;
     let detectedLang = null;
@@ -103,13 +100,34 @@ export default async function handler(req, res) {
             }
 
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+                method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     chat_id: chatId,
                     text: `🎤 J'ai entendu (${detectedLang || 'inconnu'}) : "${userText}"`
                 })
             });
+        } else if (message.location) {
+            // ===== 🆕 POSITION : enregistrement et confirmation =====
+            const lat = message.location.latitude;
+            const lon = message.location.longitude;
+            try {
+                await fetch(`${supabaseUrl}/rest/v1/secrets?user_id=eq.fatah&key=eq.position_actuelle`, {
+                    method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+                });
+                await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+                    method: "POST",
+                    headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+                    body: JSON.stringify({ user_id: "fatah", key: "position_actuelle", value: `${lat},${lon}`, is_secret: true })
+                });
+                await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        text: `📍 Position enregistrée !\n\nDemande-moi maintenant : « temps ici ? », « je peux courir ? », « vagues près de moi ? » 😊`
+                    })
+                });
+            } catch (e) { console.error("Erreur position:", e.message); }
+            return res.status(200).json({ ok: true });
         } else {
             return res.status(200).json({ ok: true });
         }
@@ -133,24 +151,17 @@ export default async function handler(req, res) {
         const botReply = data.reply;
         const replyLang = data.lang || detectedLang || "fr";
 
-        // ===== 🆕 BOUTONS si résumé de confirmation détecté =====
-        const needsButtons = /oui ou non|yes or no|نعم أو لا/.test(botReply);
-
-        const payload = { chat_id: chatId, text: botReply, parse_mode: "Markdown" };
-        if (needsButtons) {
-            payload.reply_markup = {
-                inline_keyboard: [[
-                    { text: "✅ Confirmer", callback_data: "wf_confirm" },
-                    { text: "❌ Annuler", callback_data: "wf_cancel" }
-                ]]
-            };
+        // Envoi de la réponse texte + boutons si résumé de confirmation
+        const sendPayload = { chat_id: chatId, text: botReply, parse_mode: "Markdown" };
+        if (botReply.includes("Répondez oui ou non") || botReply.includes("Reply yes or no")) {
+            sendPayload.reply_markup = { inline_keyboard: [[
+                { text: "✅ Confirmer", callback_data: "wf_confirm" },
+                { text: "❌ Annuler", callback_data: "wf_cancel" }
+            ]] };
         }
-
-        // Envoi de la réponse texte (avec Markdown + boutons éventuels)
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sendPayload)
         });
 
         // Envoi de la voix UNIQUEMENT si le message était vocal
@@ -173,8 +184,7 @@ export default async function handler(req, res) {
         console.error("Erreur Telegram:", error);
         try {
             await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+                method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: chatId, text: `❌ Erreur : ${error.message}` })
             });
         } catch (e) { console.error("Impossible d'envoyer l'erreur:", e); }
