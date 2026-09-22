@@ -1,6 +1,7 @@
 {
   "functions": {
     "api/chat.js": { "maxDuration": 30 },
-    "api/telegram.js": { "maxDuration": 30 }
+    "api/telegram.js": { "maxDuration": 30 },
+    "api/vision.js": { "maxDuration": 30 }
   }
 }
