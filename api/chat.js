@@ -4,7 +4,7 @@ const agentName = "Scoop";
 const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
-// 🆕 Ta ville par défaut (utilisée sur Telegram quand tu dis "ici" sans position)
+// Ta ville par défaut (utilisée sur Telegram quand tu dis "ici" sans position partagée)
 const VILLE_PRINCIPALE = "sidi bel abbes";
 
 function checkAuth(req) {
@@ -214,14 +214,19 @@ async function executeWorkflowAction(actionType, payload) {
     }
 }
 
-// ===== 🆕 MÉTÉO : outil get_weather (lecture seule, exécution directe) =====
-async function fetchWeatherData(req, args, currentChannel) {
+// ===== MÉTÉO : outil get_weather (lecture seule, exécution directe) =====
+async function fetchWeatherData(req, args, currentChannel, savedPos) {
     const params = new URLSearchParams();
     if (args && args.lat && args.lon) {
         params.set("lat", String(args.lat));
         params.set("lon", String(args.lon));
     } else if (args && args.place && String(args.place).trim()) {
         params.set("place", String(args.place).trim());
+    } else if (savedPos) {
+        // position partagée sur Telegram (la plus précise)
+        params.set("lat", String(savedPos.lat));
+        params.set("lon", String(savedPos.lon));
+        params.set("place_name", "Position actuelle");
     } else {
         // "ici" : géoloc auto par Vercel (uniquement depuis le SITE WEB), sinon ville principale
         const vLat = currentChannel === "web" ? req.headers["x-vercel-ip-latitude"] : null;
@@ -602,10 +607,19 @@ TON RÔLE :
                         } catch (e) { console.error("Erreur Tavily:", e.message); }
                     }
 
-                    // 🆕 MÉTÉO : exécution directe (lecture seule) + réponse naturelle dans la langue de l'utilisateur
+                    // MÉTÉO : exécution directe (lecture seule) + réponse naturelle
                     if (functionName === "get_weather") {
                         try {
-                            const wd = await fetchWeatherData(req, functionArgs, currentChannel);
+                            // 🆕 position partagée sur Telegram (clé secrète position_actuelle)
+                            const posSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "position_actuelle") : null;
+                            let savedPos = null;
+                            if (posSecret && String(posSecret.value).includes(",")) {
+                                const parts = String(posSecret.value).split(",");
+                                const la = parseFloat(parts[0]);
+                                const lo = parseFloat(parts[1]);
+                                if (!isNaN(la) && !isNaN(lo)) savedPos = { lat: la, lon: lo };
+                            }
+                            const wd = await fetchWeatherData(req, functionArgs, currentChannel, savedPos);
                             const narr = await narrateWeather(wd, userMessage, currentLang);
                             const reply = narr || formatWeatherFallback(wd);
                             return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
