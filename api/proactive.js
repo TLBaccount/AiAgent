@@ -1,7 +1,18 @@
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
+const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 
-// Villes du briefing matinal (extensible : ajoute/retire simplement, séparées par des virgules)
+// Villes du briefing matinal (extensible : ajoute/retire, séparées par des virgules)
 const CITIES_BRIEFING = "sidi bel abbes,oran,alger,adrar";
+
+async function isPaused(supabaseKey) {
+    try {
+        const r = await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.pause_messages&limit=1`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const d = await r.json();
+        return Array.isArray(d) && d.length > 0 && String(d[0].value) === "true";
+    } catch (e) { return false; }
+}
 
 async function getMultiWeather() {
     try {
@@ -34,7 +45,7 @@ async function generate(kind, weatherStr) {
         briefing: `Rédige un briefing matinal en FRANÇAIS (max 10 lignes) à partir de ces données :
 ${weatherStr || "météo indisponible"}
 Consignes :
-- Commence par une salutation PERSONNELLE adressée à Fateh, toi son utilisateur unique (ex: "Bonjour Fateh ☀️" ou une variante douce : "Réveil en douceur, Fateh"). Tu t'occupes de LUI seul : jamais de "à tous", jamais de pluriel. Ton ton : chaleureux, attentionné, comme un assistant dévoué qui prend soin de lui.
+- Commence par une salutation PERSONNELLE adressée à Fateh, toi son utilisateur unique (ex: "Bonjour Fateh ☀️" ou une variante douce). Tu t'occupes de LUI seul : jamais de "à tous", jamais de pluriel. Ton ton : chaleureux, attentionné, comme un assistant dévoué qui prend soin de lui.
 - Une ligne par ville, lisible (températures, pluie, point pratique).
 - Termine par UN conseil pratique (course à pied, camping, sorties) basé sur l'air et le vent.
 - Date : ${now}. Pas de titre, pas d'introduction, pas de tableau.`
@@ -57,6 +68,12 @@ export default async function handler(req, res) {
     if (code && req.headers['x-scoop-code'] !== code) return res.status(401).json({ error: 'Accès refusé' });
 
     const kind = (req.body && req.body.kind) === 'briefing' ? 'briefing' : 'joke';
+
+    // 🆕 PAUSE : si activée, on n'envoie RIEN
+    if (await isPaused(process.env.SUPABASE_SERVICE_KEY)) {
+        return res.status(200).json({ ok: true, paused: true });
+    }
+
     const chatId = process.env.TELEGRAM_CHAT_ID;
     if (!chatId) return res.status(200).json({ ok: false, error: 'TELEGRAM_CHAT_ID manquant' });
 
