@@ -34,7 +34,7 @@ async function generate(kind, weatherStr) {
         briefing: `Rédige un briefing matinal en FRANÇAIS (max 10 lignes) à partir de ces données :
 ${weatherStr || "météo indisponible"}
 Consignes :
-- Commence par une salutation chaleureuse courte.
+- Commence par une salutation PERSONNELLE adressée à Fateh, toi son utilisateur unique (ex: "Bonjour Fateh ☀️" ou une variante douce : "Réveil en douceur, Fateh"). Tu t'occupes de LUI seul : jamais de "à tous", jamais de pluriel. Ton ton : chaleureux, attentionné, comme un assistant dévoué qui prend soin de lui.
 - Une ligne par ville, lisible (températures, pluie, point pratique).
 - Termine par UN conseil pratique (course à pied, camping, sorties) basé sur l'air et le vent.
 - Date : ${now}. Pas de titre, pas d'introduction, pas de tableau.`
