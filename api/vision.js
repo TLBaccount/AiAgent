@@ -5,6 +5,9 @@ const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 // Clés internes : jamais montrées au LLM comme "informations"
 const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
 
+// Cascade de modèles Gemini : si l'un est surchargé (503), on essaie le suivant
+const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
+
 function checkAuth(req) {
     const code = process.env.SCOOP_WEB_CODE;
     if (!code) return true;
@@ -12,6 +15,33 @@ function checkAuth(req) {
 }
 
 function isArabicScript(text) { return /[\u0600-\u06FF]/.test(text); }
+
+// Appel Gemini avec cascade de modèles
+async function callGemini(geminiKey, body) {
+    let lastStatus = 0;
+    let lastText = "";
+    for (const model of GEMINI_MODELS) {
+        try {
+            const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + geminiKey, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            if (r.ok) {
+                const d = await r.json();
+                return { ok: true, data: d };
+            }
+            lastStatus = r.status;
+            lastText = await r.text();
+            console.error("Vision: modele " + model + " -> " + r.status);
+        } catch (e) {
+            lastStatus = 0;
+            lastText = String(e.message);
+            console.error("Vision: erreur reseau sur " + model + " -> " + e.message);
+        }
+    }
+    return { ok: false, status: lastStatus, text: lastText };
+}
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -76,7 +106,7 @@ export default async function handler(req, res) {
         const hasVal = kwMatches.some(w => w.toLowerCase() === 'val');
         let memoStatus = "";
         if (hasMemo || hasVal) {
-            const savedCount = await extractFromPhoto(base64Img, mime, capText, supabaseKey, hasMemo);
+            const savedCount = await extractFromPhoto(base64Img, mime, capText, supabaseKey, hasMemo, geminiKey);
             if (savedCount > 0) {
                 memoStatus = "MEMO_STATUS: des informations ont bien été enregistrées en mémoire. Confirme-le naturellement en une courte phrase.";
             } else {
@@ -84,7 +114,7 @@ export default async function handler(req, res) {
             }
         }
 
-        // 5. Réponse principale (Gemini vision)
+        // 5. Réponse principale (Gemini vision, avec cascade)
         const langName = lang === 'ar' ? 'ARABE' : lang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
         let instruction = "L'utilisateur a envoyé cette photo sans commentaire. Décris-la de façon claire et utile (sujet principal, texte visible important, montants et dates si présents).";
         if (capText) {
@@ -110,19 +140,14 @@ export default async function handler(req, res) {
             systemInstruction: { parts: [{ text: systemPrompt }] }
         };
 
-        const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(geminiBody)
-        });
+        const gRes = await callGemini(geminiKey, geminiBody);
 
-        if (!apiRes.ok) {
-            const t = await apiRes.text();
-            console.error("Vision Gemini error:", apiRes.status, t.substring(0, 200));
-            return res.status(200).json({ reply: "❌ Je n'ai pas réussi à analyser la photo (service momentanément indisponible).", lang: lang });
+        if (!gRes.ok) {
+            console.error("Vision Gemini error final:", gRes.status, String(gRes.text).substring(0, 500));
+            return res.status(200).json({ reply: "❌ Le service d'analyse d'images est surchargé pour l'instant. Renvoie la photo dans quelques minutes.", lang: lang });
         }
 
-        const apiData = await apiRes.json();
+        const apiData = gRes.data;
         let botText = "";
         const cand = apiData.candidates || [];
         if (cand.length > 0 && cand[0].content && cand[0].content.parts) {
@@ -164,9 +189,8 @@ export default async function handler(req, res) {
     }
 }
 
-// Extraction Memo/Val depuis la photo (Gemini, réponse JSON)
-async function extractFromPhoto(base64Img, mime, caption, supabaseKey, forceSecret) {
-    const geminiKey = process.env.GOOGLE_AI_KEY;
+// Extraction Memo/Val depuis la photo (Gemini, réponse JSON, avec cascade)
+async function extractFromPhoto(base64Img, mime, caption, supabaseKey, forceSecret, geminiKey) {
     try {
         const sysText = `Tu es un extracteur d'informations depuis une PHOTO.\n\nRÈGLE 1 : si la légende contient "Memo" → is_secret = true. Si "Val" → is_secret = false. Sinon → {"secrets": []}.\nRÈGLE 2 : clés UNIQUES et descriptives (ex: facture_montant_eau, contact_nom, numero_contrat).\nRÈGLE 3 : n'invente rien : uniquement ce qui est visible sur la photo.\n\nRéponds en JSON strict :\n{"secrets": [{"key": "...", "value": "...", "is_secret": true}]}\nou {"secrets": []} si rien.`;
 
@@ -184,13 +208,10 @@ async function extractFromPhoto(base64Img, mime, caption, supabaseKey, forceSecr
             systemInstruction: { parts: [{ text: sysText }] }
         };
 
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(geminiBody)
-        });
+        const gRes = await callGemini(geminiKey, geminiBody);
+        if (!gRes.ok) return 0;
 
-        const d = await r.json();
+        const d = gRes.data;
         let content = "";
         const cand = d.candidates || [];
         if (cand.length > 0 && cand[0].content && cand[0].content.parts) {
