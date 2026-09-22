@@ -4,13 +4,54 @@ const agentName = "Scoop";
 const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
-// Ta ville par défaut (utilisée sur Telegram quand tu dis "ici" sans position partagée)
+// Ville par défaut ultime (si aucune ville principale enregistrée)
 const VILLE_PRINCIPALE = "sidi bel abbes";
+
+// 🆕 Clés internes : jamais montrées au LLM comme "informations"
+const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
 
 function checkAuth(req) {
     const code = process.env.SCOOP_WEB_CODE;
     if (!code) return true;
     return req.headers['x-scoop-code'] === code;
+}
+
+// ===== 🆕 RÉGLAGES INTERNES (pause, ville principale...) =====
+async function getInternalSetting(supabaseKey, key) {
+    try {
+        const r = await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.${key}&limit=1`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const d = await r.json();
+        return (Array.isArray(d) && d.length > 0) ? String(d[0].value) : null;
+    } catch (e) { return null; }
+}
+
+async function setInternalSetting(supabaseKey, key, value) {
+    try {
+        await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.${key}`, {
+            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        await fetch(`${supabaseUrl}/rest/v1/secrets`, {
+            method: "POST",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+            body: JSON.stringify({ user_id: "fatah", key: key, value: value, is_secret: false })
+        });
+    } catch (e) { console.error("Erreur setInternalSetting:", e.message); }
+}
+
+// 🆕 Géocodage léger (validation du nom de ville)
+async function geocodeCity(name) {
+    try {
+        const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=fr&format=json`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        if (Array.isArray(d.results) && d.results.length > 0) {
+            const g = d.results[0];
+            return { name: g.name, country: g.country || "", lat: g.latitude, lon: g.longitude };
+        }
+        return null;
+    } catch (e) { return null; }
 }
 
 // ===== TEXTES DU WORKFLOW (multilingue) =====
@@ -21,6 +62,10 @@ const WF = {
         confirmed: "✅ Action exécutée avec succès !",
         cancelled: "❌ Brouillon annulé. Rien n'a été exécuté.",
         missing: "Il me manque :",
+        pauseOn: "⏸️ Messages automatiques en pause. Dis « reprendre messages » pour les réactiver.",
+        pauseOff: "▶️ Messages automatiques réactivés ! À demain matin ☀️",
+        cityOk: "🏙️ Ville principale : {city} ✅",
+        cityKo: "❌ Ville introuvable. Vérifie l'orthographe (ex: Oran, Tlemcen...).",
         lbl: { to: "À", subject: "Sujet", body: "Message", title: "Titre", date: "Date", time: "Heure", share_type: "Type", content: "Données" },
         fields: {
             to: "l'adresse email du destinataire", subject: "le sujet", body: "le contenu du message",
@@ -34,6 +79,10 @@ const WF = {
         confirmed: "✅ Action executed successfully!",
         cancelled: "❌ Draft cancelled. Nothing was executed.",
         missing: "I still need:",
+        pauseOn: "⏸️ Automatic messages paused. Say \"resume messages\" to reactivate them.",
+        pauseOff: "▶️ Automatic messages reactivated! See you tomorrow morning ☀️",
+        cityOk: "🏙️ Main city: {city} ✅",
+        cityKo: "❌ City not found. Check the spelling.",
         lbl: { to: "To", subject: "Subject", body: "Message", title: "Title", date: "Date", time: "Time", share_type: "Type", content: "Data" },
         fields: {
             to: "the recipient's email address", subject: "the subject", body: "the message content",
@@ -47,6 +96,10 @@ const WF = {
         confirmed: "✅ تم تنفيذ العملية بنجاح!",
         cancelled: "❌ تم إلغاء المسودة. لم يتم تنفيذ شيء.",
         missing: "ما زال ينقصني:",
+        pauseOn: "⏸️ تم إيقاف الرسائل التلقائية مؤقتًا. قل « استئناف الرسائل » لإعادة تنشيطها.",
+        pauseOff: "▶️ تمت إعادة تنشيط الرسائل التلقائية! إلى الغد صباحًا ☀️",
+        cityOk: "🏙️ المدينة الرئيسية: {city} ✅",
+        cityKo: "❌ لم يتم العثور على المدينة. تحقق من الإملاء.",
         lbl: { to: "إلى", subject: "الموضوع", body: "الرسالة", title: "العنوان", date: "التاريخ", time: "الوقت", share_type: "النوع", content: "البيانات" },
         fields: {
             to: "البريد الإلكتروني للمستلم", subject: "الموضوع", body: "محتوى الرسالة",
@@ -117,8 +170,20 @@ function isCancellation(text) {
     return /^\s*(non|no|annule|annuler|annulé|cancel|stop|abandonne|abandonner|arrête|arrete)\s*[!.؟?]*\s*$/i.test(text.trim());
 }
 
+// 🆕 Commandes pause / reprise / ville principale (décidées par le SERVEUR)
+function isPauseCmd(text) {
+    return /^\s*(pause|stop|arrête|arrete|stoppe)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
+}
+function isResumeCmd(text) {
+    return /^\s*(reprends?|reprendre|réactive|reactive|resume|relance)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
+}
+function matchCityCmd(text) {
+    const m = text.trim().match(/^\s*(?:change(?:r)?(?:\s+ma)?\s+ville\s+principale(?:\s+(?:en|pour|à|:))?\s+|set\s+(?:my\s+)?(?:home|main)\s+city\s+(?:to)?\s*)([\p{L}\p{M}\s\-'’]+?)\s*[!.]*\s*$/iu);
+    return m ? m[1].trim() : null;
+}
+
 // ===== CRUD BROUILLONS (pending_actions) =====
-async function getPendingAction(supabaseUrl, supabaseKey) {
+async function getPendingAction(supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft&order=id.desc&limit=1`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
@@ -127,17 +192,16 @@ async function getPendingAction(supabaseUrl, supabaseKey) {
         if (!Array.isArray(data) || data.length === 0) return null;
         const row = data[0];
         const age = Date.now() - new Date(row.updated_at).getTime();
-        if (age > 24 * 60 * 60 * 1000) { // expiration 24h
-            await deletePendingAction(supabaseUrl, supabaseKey, row.id);
+        if (age > 24 * 60 * 60 * 1000) {
+            await deletePendingAction(supabaseKey, row.id);
             return null;
         }
         return row;
     } catch (e) { return null; }
 }
 
-async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) {
+async function savePendingAction(supabaseKey, actionType, payload) {
     try {
-        // Un seul brouillon actif : on supprime les anciens
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft`, {
             method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
@@ -149,7 +213,7 @@ async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) 
     } catch (e) { console.error("Erreur savePendingAction:", e.message); }
 }
 
-async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
+async function updatePendingAction(supabaseKey, id, payload) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
             method: "PATCH",
@@ -159,7 +223,7 @@ async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
     } catch (e) { console.error("Erreur updatePendingAction:", e.message); }
 }
 
-async function deletePendingAction(supabaseUrl, supabaseKey, id) {
+async function deletePendingAction(supabaseKey, id) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
             method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
@@ -214,8 +278,8 @@ async function executeWorkflowAction(actionType, payload) {
     }
 }
 
-// ===== MÉTÉO : outil get_weather (lecture seule, exécution directe) =====
-async function fetchWeatherData(req, args, currentChannel, savedPos) {
+// ===== MÉTÉO : outil get_weather (lecture seule) =====
+async function fetchWeatherData(req, args, currentChannel, savedPos, homeCity) {
     const params = new URLSearchParams();
     if (args && args.lat && args.lon) {
         params.set("lat", String(args.lat));
@@ -238,7 +302,7 @@ async function fetchWeatherData(req, args, currentChannel, savedPos) {
             try { ville = decodeURIComponent(String(req.headers["x-vercel-ip-city"] || ville)); } catch (e) {}
             params.set("place_name", ville);
         } else {
-            params.set("place", VILLE_PRINCIPALE);
+            params.set("place", homeCity || VILLE_PRINCIPALE);
         }
     }
     if (args && (args.want_air === true || args.want_air === "true")) params.set("air", "1");
@@ -322,7 +386,7 @@ export default async function handler(req, res) {
     if (lowerMsg.includes(agentName.toLowerCase()) &&
         (lowerMsg.includes("quelle heure") || lowerMsg.includes("what time") || lowerMsg.includes("الساعة"))) {
         const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Algiers' });
-        return respond(res, supabaseUrl, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
+        return respond(res, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
     }
 
     // Mots-clés Memo / Val
@@ -335,48 +399,62 @@ export default async function handler(req, res) {
     // Les secrets ne sortent QUE si l'utilisateur dit "Scoop"
     const wantsSecrets = /\bscoop\b/i.test(userMessage);
 
-    const secrets = await getSecrets(supabaseUrl, supabaseKey);
-    const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
+    const secrets = await getSecrets(supabaseKey);
+    // 🆕 On filtre les réglages internes : ce ne sont pas des "informations" à montrer
+    const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret && !INTERNAL_KEYS.includes(s.key)) : [];
     const privateSecrets = wantsSecrets && Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique côté serveur (20 derniers messages du canal)
-    let fullHistory = [];
-    try {
-        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20&channel=eq.${currentChannel}`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        });
-        const hData = await hRes.json();
-        if (Array.isArray(hData)) fullHistory = hData.reverse().map(m => ({ role: m.role, content: m.content }));
-    } catch (e) { console.error("Erreur historique:", e.message); }
-
     try {
         if (shouldExtractSecrets) {
             const forceSecret = hasMemoKeyword ? true : false;
-            await extractSecrets(userMessage, "", supabaseUrl, supabaseKey, forceSecret);
+            await extractSecrets(userMessage, "", supabaseKey, forceSecret);
+        }
+
+        // ===== 🆕 COMMANDES SYSTÈME (décidées par le SERVEUR, avant tout le reste) =====
+        const t = WF[currentLang] || WF.fr;
+
+        // PAUSE messages automatiques
+        if (isPauseCmd(userMessage)) {
+            await setInternalSetting(supabaseKey, "pause_messages", "true");
+            return respond(res, supabaseKey, userMessage, t.pauseOn, currentLang);
+        }
+        // REPRISE messages automatiques
+        if (isResumeCmd(userMessage)) {
+            await setInternalSetting(supabaseKey, "pause_messages", "false");
+            return respond(res, supabaseKey, userMessage, t.pauseOff, currentLang);
+        }
+        // VILLE PRINCIPALE
+        const newCity = matchCityCmd(userMessage);
+        if (newCity) {
+            const g = await geocodeCity(newCity);
+            if (g) {
+                await setInternalSetting(supabaseKey, "ville_principale", g.name);
+                return respond(res, supabaseKey, userMessage, t.cityOk.replace("{city}", `${g.name}${g.country ? ", " + g.country : ""}`), currentLang);
+            }
+            return respond(res, supabaseKey, userMessage, t.cityKo, currentLang);
         }
 
         // ===== WORKFLOW : BROUILLON EN COURS ? =====
-        const pending = await getPendingAction(supabaseUrl, supabaseKey);
-        const t = WF[currentLang] || WF.fr;
+        const pending = await getPendingAction(supabaseKey);
 
         // 1) ANNULATION (décidée par le SERVEUR, pas le LLM)
         if (pending && isCancellation(userMessage)) {
-            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
-            return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
+            await deletePendingAction(supabaseKey, pending.id);
+            return respond(res, supabaseKey, userMessage, t.cancelled, currentLang);
         }
 
         // 2) CONFIRMATION (décidée par le SERVEUR, pas le LLM)
         if (pending && isConfirmation(userMessage)) {
             const missing = missingFields(pending.action_type, pending.payload || {});
             if (missing.length > 0) {
-                return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
+                return respond(res, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
             }
             const exec = await executeWorkflowAction(pending.action_type, pending.payload || {});
-            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+            await deletePendingAction(supabaseKey, pending.id);
             const reply = exec.ok ? (exec.result ? `✅ ${exec.result}` : t.confirmed) : `❌ ${exec.error || "Échec de l'action."}`;
-            return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
+            return respond(res, supabaseKey, userMessage, reply, currentLang);
         }
 
         const formatRules = currentChannel === "telegram"
@@ -556,16 +634,16 @@ TON RÔLE :
                 // ===== MODE BROUILLON : draft_action / cancel_action =====
                 if (pending) {
                     if (functionName === "cancel_action") {
-                        await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
+                        await deletePendingAction(supabaseKey, pending.id);
+                        return respond(res, supabaseKey, userMessage, t.cancelled, currentLang);
                     }
                     if (functionName === "draft_action") {
                         const newPayload = { ...(pending.payload || {}) };
                         for (const [k, v] of Object.entries(functionArgs)) {
                             if (v && String(v).trim()) newPayload[k] = String(v).trim();
                         }
-                        await updatePendingAction(supabaseUrl, supabaseKey, pending.id, newPayload);
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, newPayload, currentLang), currentLang);
+                        await updatePendingAction(supabaseKey, pending.id, newPayload);
+                        return respond(res, supabaseKey, userMessage, askMissing(pending.action_type, newPayload, currentLang), currentLang);
                     }
                     botText = String(responseMessage.content || "").trim();
                 } else {
@@ -576,7 +654,7 @@ TON RÔLE :
                             body: JSON.stringify({ url: functionArgs.url })
                         });
                         const shortenData = await shortenRes.json();
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
+                        return respond(res, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
                     }
 
                     // RECHERCHE : Tavily direct (lecture seule, exécution immédiate)
@@ -602,7 +680,7 @@ TON RÔLE :
                                 } else {
                                     replyText = currentLang === "en" ? "🔎 No results found." : currentLang === "ar" ? "🔎 لا توجد نتائج." : "🔎 Aucun résultat trouvé.";
                                 }
-                                return respond(res, supabaseUrl, supabaseKey, userMessage, replyText, currentLang);
+                                return respond(res, supabaseKey, userMessage, replyText, currentLang);
                             }
                         } catch (e) { console.error("Erreur Tavily:", e.message); }
                     }
@@ -610,7 +688,7 @@ TON RÔLE :
                     // MÉTÉO : exécution directe (lecture seule) + réponse naturelle
                     if (functionName === "get_weather") {
                         try {
-                            // 🆕 position partagée sur Telegram (clé secrète position_actuelle)
+                            // Position partagée sur Telegram (clé position_actuelle)
                             const posSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "position_actuelle") : null;
                             let savedPos = null;
                             if (posSecret && String(posSecret.value).includes(",")) {
@@ -619,12 +697,15 @@ TON RÔLE :
                                 const lo = parseFloat(parts[1]);
                                 if (!isNaN(la) && !isNaN(lo)) savedPos = { lat: la, lon: lo };
                             }
-                            const wd = await fetchWeatherData(req, functionArgs, currentChannel, savedPos);
+                            // 🆕 Ville principale enregistrée (remplace la constante)
+                            const homeSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "ville_principale") : null;
+                            const homeCity = homeSecret ? String(homeSecret.value) : VILLE_PRINCIPALE;
+                            const wd = await fetchWeatherData(req, functionArgs, currentChannel, savedPos, homeCity);
                             const narr = await narrateWeather(wd, userMessage, currentLang);
                             const reply = narr || formatWeatherFallback(wd);
-                            return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
+                            return respond(res, supabaseKey, userMessage, reply, currentLang);
                         } catch (e) {
-                            return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Météo indisponible : ${e.message}`, currentLang);
+                            return respond(res, supabaseKey, userMessage, `❌ Météo indisponible : ${e.message}`, currentLang);
                         }
                     }
 
@@ -645,8 +726,8 @@ TON RÔLE :
                         for (const k of Object.keys(draftPayload)) {
                             if (!draftPayload[k]) delete draftPayload[k];
                         }
-                        await savePendingAction(supabaseUrl, supabaseKey, draftType, draftPayload);
-                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(draftType, draftPayload, currentLang), currentLang);
+                        await savePendingAction(supabaseKey, draftType, draftPayload);
+                        return respond(res, supabaseKey, userMessage, askMissing(draftType, draftPayload, currentLang), currentLang);
                     }
                 }
             }
@@ -661,7 +742,7 @@ TON RÔLE :
         botText = botText.replace(/\n{3,}/g, "\n\n");
         botText = botText.trim();
 
-        return respond(res, supabaseUrl, supabaseKey, userMessage, botText, currentLang);
+        return respond(res, supabaseKey, userMessage, botText, currentLang);
 
     } catch (error) {
         console.error("Erreur serveur:", error);
@@ -670,7 +751,7 @@ TON RÔLE :
 }
 
 // Sauvegarde unique (user + assistant) puis réponse — avec canal
-async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
+async function respond(res, supabaseKey, userText, botReply, lang) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
@@ -705,7 +786,7 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     } catch (error) { console.error("Erreur nettoyage:", error); }
 }
 
-async function getSecrets(supabaseUrl, supabaseKey) {
+async function getSecrets(supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
@@ -717,7 +798,7 @@ async function getSecrets(supabaseUrl, supabaseKey) {
 
 function isArabicScript(text) { return /[\u0600-\u06FF]/.test(text); }
 
-async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecret) {
+async function upsertSecret(supabaseKey, userId, key, value, isSecret) {
     const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
     const existingRes = await fetch(
         `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
@@ -742,7 +823,7 @@ async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecr
     }
 }
 
-async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
+async function extractSecrets(message, botReply, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     if (!groqKey) return;
     try {
@@ -772,7 +853,7 @@ Réponds en JSON : {"secrets": [{"key": "...", "value": "...", "is_secret": true
         const secrets = parsed.secrets || [];
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
-            await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
+            await upsertSecret(supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
         }
     } catch (error) {
         console.error("Erreur extraction secrets:", error.message);
