@@ -7,7 +7,7 @@ const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 // Ville par défaut ultime (si aucune ville principale enregistrée)
 const VILLE_PRINCIPALE = "sidi bel abbes";
 
-// 🆕 Clés internes : jamais montrées au LLM comme "informations"
+// Clés internes : jamais montrées au LLM comme "informations"
 const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
 
 function checkAuth(req) {
@@ -16,7 +16,7 @@ function checkAuth(req) {
     return req.headers['x-scoop-code'] === code;
 }
 
-// ===== 🆕 RÉGLAGES INTERNES (pause, ville principale...) =====
+// ===== RÉGLAGES INTERNES (pause, ville principale...) =====
 async function getInternalSetting(supabaseKey, key) {
     try {
         const r = await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.${key}&limit=1`, {
@@ -40,7 +40,7 @@ async function setInternalSetting(supabaseKey, key, value) {
     } catch (e) { console.error("Erreur setInternalSetting:", e.message); }
 }
 
-// 🆕 Géocodage léger (validation du nom de ville)
+// Géocodage léger (validation du nom de ville)
 async function geocodeCity(name) {
     try {
         const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=fr&format=json`);
@@ -170,7 +170,7 @@ function isCancellation(text) {
     return /^\s*(non|no|annule|annuler|annulé|cancel|stop|abandonne|abandonner|arrête|arrete)\s*[!.؟?]*\s*$/i.test(text.trim());
 }
 
-// 🆕 Commandes pause / reprise / ville principale (décidées par le SERVEUR)
+// Commandes pause / reprise / ville principale (décidées par le SERVEUR)
 function isPauseCmd(text) {
     return /^\s*(pause|stop|arrête|arrete|stoppe)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
 }
@@ -178,7 +178,7 @@ function isResumeCmd(text) {
     return /^\s*(reprends?|reprendre|réactive|reactive|resume|relance)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
 }
 function matchCityCmd(text) {
-    const m = text.trim().match(/^\s*(?:change(?:r)?(?:\s+ma)?\s+ville\s+principale(?:\s+(?:en|pour|à|:))?\s+|set\s+(?:my\s+)?(?:home|main)\s+city\s+(?:to)?\s*)([\p{L}\p{M}\s\-'’]+?)\s*[!.]*\s*$/iu);
+    const m = text.trim().match(/^\s*(?:change(?:r|s|z)?(?:\s+ma)?\s+ville\s+principale(?:\s+(?:en|pour|à|:))?\s+|set\s+(?:my\s+)?(?:home|main)\s+city\s+(?:to)?\s*)([\p{L}\p{M}\s\-'’]+?)\s*[!.]*\s*$/iu);
     return m ? m[1].trim() : null;
 }
 
@@ -400,11 +400,21 @@ export default async function handler(req, res) {
     const wantsSecrets = /\bscoop\b/i.test(userMessage);
 
     const secrets = await getSecrets(supabaseKey);
-    // 🆕 On filtre les réglages internes : ce ne sont pas des "informations" à montrer
+    // Filtre des réglages internes : ce ne sont pas des "informations" à montrer
     const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret && !INTERNAL_KEYS.includes(s.key)) : [];
     const privateSecrets = wantsSecrets && Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
+
+    // Historique côté serveur (20 derniers messages du canal)
+    let fullHistory = [];
+    try {
+        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20&channel=eq.${currentChannel}`, {
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+        });
+        const hData = await hRes.json();
+        if (Array.isArray(hData)) fullHistory = hData.reverse().map(m => ({ role: m.role, content: m.content }));
+    } catch (e) { console.error("Erreur historique:", e.message); }
 
     try {
         if (shouldExtractSecrets) {
@@ -412,7 +422,7 @@ export default async function handler(req, res) {
             await extractSecrets(userMessage, "", supabaseKey, forceSecret);
         }
 
-        // ===== 🆕 COMMANDES SYSTÈME (décidées par le SERVEUR, avant tout le reste) =====
+        // ===== COMMANDES SYSTÈME (décidées par le SERVEUR, avant tout le reste) =====
         const t = WF[currentLang] || WF.fr;
 
         // PAUSE messages automatiques
@@ -697,7 +707,7 @@ TON RÔLE :
                                 const lo = parseFloat(parts[1]);
                                 if (!isNaN(la) && !isNaN(lo)) savedPos = { lat: la, lon: lo };
                             }
-                            // 🆕 Ville principale enregistrée (remplace la constante)
+                            // Ville principale enregistrée (remplace la constante)
                             const homeSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "ville_principale") : null;
                             const homeCity = homeSecret ? String(homeSecret.value) : VILLE_PRINCIPALE;
                             const wd = await fetchWeatherData(req, functionArgs, currentChannel, savedPos, homeCity);
