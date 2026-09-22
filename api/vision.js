@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     const { fileId, caption, channel } = req.body;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
     const geminiKey = process.env.GOOGLE_AI_KEY;
-    const token = process.env.TLELEGRAM_BOT_TOKEN;
+    const token = process.env.TELEGRAM_BOT_TOKEN;
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
     if (!fileId) return res.status(400).json({ error: 'Photo manquante' });
@@ -41,8 +41,9 @@ export default async function handler(req, res) {
         let lang = "fr";
         const capText = String(caption || "").trim();
         if (capText) {
-            if (/[\u0600-\u06FF]/.test(capText)) lang = "ar";
-            else {
+            if (/[\u0600-\u06FF]/.test(capText)) {
+                lang = "ar";
+            } else {
                 const guesses = francAll(capText, { minLength: 1 });
                 const top = guesses.find(([code]) => code === 'fra' || code === 'eng');
                 if (top && top[0] === 'eng') lang = 'en';
@@ -76,50 +77,60 @@ export default async function handler(req, res) {
         let memoStatus = "";
         if (hasMemo || hasVal) {
             const savedCount = await extractFromPhoto(base64Img, mime, capText, supabaseKey, hasMemo);
-            memoStatus = savedCount > 0
-                ? `MEMO_STATUS: ${savedCount} information(s) ont bien été enregistrée(s) en mémoire. Confirme-le naturellement en une courte phrase.`
-                : "MEMO_STATUS: aucune nouvelle information n'a pu être enregistrée. Ne promets aucun enregistrement.";
+            if (savedCount > 0) {
+                memoStatus = "MEMO_STATUS: des informations ont bien été enregistrées en mémoire. Confirme-le naturellement en une courte phrase.";
+            } else {
+                memoStatus = "MEMO_STATUS: aucune nouvelle information n'a pu être enregistrée. Ne promets aucun enregistrement.";
+            }
         }
 
         // 5. Réponse principale (Gemini vision)
         const langName = lang === 'ar' ? 'ARABE' : lang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
-        const instruction = capText
-            ? `L'utilisateur a envoyé cette photo avec cette demande : "${capText}". Suis cette demande.`
-            : `L'utilisateur a envoyé cette photo sans commentaire. Décris-la de façon claire et utile (sujet principal, texte visible important, montants/dates si présents).`;
+        let instruction = "L'utilisateur a envoyé cette photo sans commentaire. Décris-la de façon claire et utile (sujet principal, texte visible important, montants et dates si présents).";
+        if (capText) {
+            instruction = `L'utilisateur a envoyé cette photo avec cette demande : "${capText}". Suis cette demande.`;
+        }
 
-        const systemPrompt = `Tu es Scoop, l'assistant personnel de Fateh. Tu analyses UNE photo qu'il t'envoie.
+        let systemPrompt = `Tu es Scoop, l'assistant personnel de Fateh. Tu analyses UNE photo qu'il t'envoie.\n\nRÈGLE ABSOLUE : réponds EXCLUSIVEMENT en ${langName}.\n- Chaleureux, précis, concis (max 15 lignes).\n- Si la photo contient du texte (document, facture, panneau...), cite les éléments importants (montants, dates, noms).\n- N'invente JAMAIS ce que tu ne vois pas.\n- INTERDIT : parler d'envoi d'email, d'agenda ou d'exécution d'action à cause de la photo.\n\nINFORMATIONS (non-secrètes) :\n${publicText}\n`;
+        if (privateText) {
+            systemPrompt = systemPrompt + `\nSECRETS (protégés) :\n${privateText}\n`;
+        }
+        if (memoStatus) {
+            systemPrompt = systemPrompt + `\n${memoStatus}\n`;
+        }
 
-RÈGLE ABSOLUE : réponds EXCLUSIVEMENT en ${langName}.
-- Chaleureux, précis, concis (max 15 lignes).
-- Si la photo contient du texte (document, facture, panneau...), cite les éléments importants (montants, dates, noms).
-- N'invente JAMAIS ce que tu ne vois pas.
-- INTERDIT : parler d'envoi d'email, d'agenda ou d'exécution d'action à cause de la photo.
-- Les informations NON-SECRÈTES sont PUBLIQUES. Les SECRETS ne sont là que si Fateh a dit "Scoop".
-
-INFORMATIONS (non-secrètes) :
-${publicText}
-${privateText ? `\nSECRETS (protégés) :\n${privateText}\n` : ""}
-${memoStatus}`;
+        const geminiBody = {
+            contents: [{
+                role: "user",
+                parts: [
+                    { inline_data: { mime_type: mime, data: base64Img } },
+                    { text: instruction }
+                ]
+            }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+        };
 
         const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ role: "user", parts: [
-                    { inline_data: { mime_type: mime, data: base64Img } },
-                    { text: instruction }
-                ]}],
-                systemInstruction: { parts: [{ text: systemPrompt }] }
-            })
+            body: JSON.stringify(geminiBody)
         });
 
         if (!apiRes.ok) {
             const t = await apiRes.text();
             console.error("Vision Gemini error:", apiRes.status, t.substring(0, 200));
-            return res.status(200).json({ reply: "❌ Je n'ai pas réussi à analyser la photo (service vision momentanément indisponible).", lang });
+            return res.status(200).json({ reply: "❌ Je n'ai pas réussi à analyser la photo (service momentanément indisponible).", lang: lang });
         }
+
         const apiData = await apiRes.json();
-        let botText = ((apiData.candidates || [])[0]?.content?.parts || []).map(p => p.text || "").join(" ").trim();
+        let botText = "";
+        const cand = apiData.candidates || [];
+        if (cand.length > 0 && cand[0].content && cand[0].content.parts) {
+            for (const p of cand[0].content.parts) {
+                if (p.text) botText = botText + p.text;
+            }
+        }
+        botText = botText.trim();
         if (!botText) botText = "Je n'ai rien pu lire sur cette photo.";
 
         // 6. Nettoyage (même style que chat.js)
@@ -132,17 +143,20 @@ ${memoStatus}`;
         botText = botText.replace(/\n{3,}/g, "\n\n");
         botText = botText.trim();
 
-        // 7. Sauvegarde de la conversation (photo + réponse)
+        // 7. Sauvegarde de la conversation
         const userMsg = capText ? `📷 Photo + « ${capText} »` : "📷 Photo";
         try {
             await fetch(`${supabaseUrl}/rest/v1/messages`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-                body: JSON.stringify([{ role: "user", content: userMsg, channel: currentChannel }, { role: "assistant", content: botText, channel: currentChannel }])
+                body: JSON.stringify([
+                    { role: "user", content: userMsg, channel: currentChannel },
+                    { role: "assistant", content: botText, channel: currentChannel }
+                ])
             });
         } catch (e) {}
 
-        return res.status(200).json({ reply: botText, lang });
+        return res.status(200).json({ reply: botText, lang: lang });
 
     } catch (error) {
         console.error("Erreur vision:", error.message);
@@ -154,25 +168,36 @@ ${memoStatus}`;
 async function extractFromPhoto(base64Img, mime, caption, supabaseKey, forceSecret) {
     const geminiKey = process.env.GOOGLE_AI_KEY;
     try {
+        const sysText = `Tu es un extracteur d'informations depuis une PHOTO.\n\nRÈGLE 1 : si la légende contient "Memo" → is_secret = true. Si "Val" → is_secret = false. Sinon → {"secrets": []}.\nRÈGLE 2 : clés UNIQUES et descriptives (ex: facture_montant_eau, contact_nom, numero_contrat).\nRÈGLE 3 : n'invente rien : uniquement ce qui est visible sur la photo.\n\nRéponds en JSON strict :\n{"secrets": [{"key": "...", "value": "...", "is_secret": true}]}\nou {"secrets": []} si rien.`;
+
+        const userText = `Légende de l'utilisateur : "${caption}"\n\nExtrais de la photo les informations à enregistrer selon la demande de la légende (montants, dates, noms, numéros...).`;
+
+        const geminiBody = {
+            contents: [{
+                role: "user",
+                parts: [
+                    { inline_data: { mime_type: mime, data: base64Img } },
+                    { text: userText }
+                ]
+            }],
+            generationConfig: { temperature: 0, responseMimeType: "application/json" },
+            systemInstruction: { parts: [{ text: sysText }] }
+        };
+
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ role: "user", parts: [
-                    { inline_data: { mime_type: mime, data: base64Img } },
-                    { text: `Légende de l'utilisateur : "${caption}"\n\nExtrais de la photo les informations à enregistrer selon la demande de la légende (montants, dates, noms, numéros...).` }
-                ]}],
-                generationConfig: { temperature: 0, responseMimeType: "application/json" },
-                systemInstruction: { parts: [{ text: `Tu es un extracteur d'informations depuis une PHOTO.
-
-RÈGLE 1 : si la légende contient "Memo" → is_secret = true. Si "Val" → is_secret = false. Sinon → {"secrets": []}.
-RÈGLE 2 : clés UNIQUES et descriptives (ex: facture_montant_eau, contact_nom, numero_contrat).
-RÈGLE 3 : n'invente rien : uniquement ce qui est visible sur la photo.
-Réponds en JSON strict : {"secrets": [{"key": "...", "value": "...", "is_secret": true}]} — ou {"secrets": []} si rien.` }]
-            })
+            body: JSON.stringify(geminiBody)
         });
+
         const d = await r.json();
-        let content = ((d.candidates || [])[0]?.content?.parts || []).map(p => p.text || "").join(" ").trim();
+        let content = "";
+        const cand = d.candidates || [];
+        if (cand.length > 0 && cand[0].content && cand[0].content.parts) {
+            for (const p of cand[0].content.parts) {
+                if (p.text) content = content + p.text;
+            }
+        }
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
         const m = content.match(/\{[\s\S]*\}/);
         if (m) content = m[0];
@@ -181,7 +206,8 @@ Réponds en JSON strict : {"secrets": [{"key": "...", "value": "...", "is_secret
         let saved = 0;
         for (const s of secrets) {
             if (!s.key || s.value === undefined || s.value === null) continue;
-            const ok = await upsertSecret(supabaseKey, "fatah", String(s.key), String(s.value), forceSecret ? true : !!s.is_secret);
+            const isSecretFinal = forceSecret ? true : !!s.is_secret;
+            const ok = await upsertSecret(supabaseKey, "fatah", String(s.key), String(s.value), isSecretFinal);
             if (ok) saved++;
         }
         return saved;
@@ -214,5 +240,7 @@ async function upsertSecret(supabaseKey, userId, key, value, isSecret) {
             });
         }
         return true;
-    } catch (e) { return false; }
+    } catch (e) {
+        return false;
+    }
 }
