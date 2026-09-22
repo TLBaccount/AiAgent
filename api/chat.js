@@ -4,6 +4,9 @@ const agentName = "Scoop";
 const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
+// 🆕 Ta ville par défaut (utilisée sur Telegram quand tu dis "ici" sans position)
+const VILLE_PRINCIPALE = "sidi bel abbes";
+
 function checkAuth(req) {
     const code = process.env.SCOOP_WEB_CODE;
     if (!code) return true;
@@ -211,13 +214,80 @@ async function executeWorkflowAction(actionType, payload) {
     }
 }
 
+// ===== 🆕 MÉTÉO : outil get_weather (lecture seule, exécution directe) =====
+async function fetchWeatherData(req, args, currentChannel) {
+    const params = new URLSearchParams();
+    if (args && args.lat && args.lon) {
+        params.set("lat", String(args.lat));
+        params.set("lon", String(args.lon));
+    } else if (args && args.place && String(args.place).trim()) {
+        params.set("place", String(args.place).trim());
+    } else {
+        // "ici" : géoloc auto par Vercel (uniquement depuis le SITE WEB), sinon ville principale
+        const vLat = currentChannel === "web" ? req.headers["x-vercel-ip-latitude"] : null;
+        const vLon = currentChannel === "web" ? req.headers["x-vercel-ip-longitude"] : null;
+        if (vLat && vLon) {
+            params.set("lat", String(vLat));
+            params.set("lon", String(vLon));
+            let ville = "Position actuelle";
+            try { ville = decodeURIComponent(String(req.headers["x-vercel-ip-city"] || ville)); } catch (e) {}
+            params.set("place_name", ville);
+        } else {
+            params.set("place", VILLE_PRINCIPALE);
+        }
+    }
+    if (args && (args.want_air === true || args.want_air === "true")) params.set("air", "1");
+    if (args && (args.want_marine === true || args.want_marine === "true")) params.set("marine", "1");
+    const r = await fetch(`${siteUrl}/api/weather?${params.toString()}`);
+    return await r.json();
+}
+
+function formatWeatherFallback(d) {
+    if (!d || d.error || !Array.isArray(d.meteo) || d.meteo.length === 0) {
+        return `❌ Météo indisponible${d && d.error ? " : " + d.error : ""}`;
+    }
+    const lines = [];
+    for (const m of d.meteo) {
+        lines.push(`📍 ${m.ville}${m.pays ? " (" + m.pays + ")" : ""} : ${m.maintenant.temp_c}°C, ${m.maintenant.temps}`);
+        lines.push(`   Aujourd'hui : ${m.aujourdhui.min_c}–${m.aujourdhui.max_c}°C, pluie ${m.aujourdhui.pluie_pct}%, rafales ${m.aujourdhui.rafales_kmh} km/h, UV ${m.aujourdhui.uv_max}`);
+        lines.push(`   Demain : ${m.demain.min_c}–${m.demain.max_c}°C, pluie ${m.demain.pluie_pct}%, ${m.demain.temps}`);
+    }
+    if (d.air) lines.push(`🌿 Air : indice ${d.air.aqi_europeen} — ${d.air.qualite}`);
+    if (d.mer) lines.push(`🌊 Mer : vagues ${d.mer.hauteur_vagues_m} m — ${d.mer.etat}`);
+    return lines.join("\n");
+}
+
+// Réponse naturelle dans la langue de l'utilisateur (2e passage LLM)
+async function narrateWeather(d, userMessage, lang) {
+    try {
+        const groqKey = process.env.GROQ_API_KEY;
+        if (!groqKey) return null;
+        const langName = lang === 'ar' ? 'ARABE' : lang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
+        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
+            body: JSON.stringify({
+                model: "openai/gpt-oss-20b",
+                reasoning_effort: "low",
+                messages: [
+                    { role: "system", content: `Tu es Scoop, l'assistant personnel dévoué de Fateh (utilisateur unique). Réponds EXCLUSIVEMENT en ${langName}. Utilise les données météo JSON fournies pour répondre naturellement à sa question : courte, chaleureuse, personnelle, avec UN conseil pratique basé sur air/vent/pluie/UV/vagues. Ne montre JAMAIS le JSON brut. Max 8 lignes.` },
+                    { role: "user", content: `Données météo : ${JSON.stringify(d)}\n\nQuestion de Fateh : ${userMessage}` }
+                ]
+            })
+        });
+        if (!r.ok) return null;
+        const txt = (await r.json()).choices[0].message.content.trim();
+        return txt || null;
+    } catch (e) { return null; }
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     if (!checkAuth(req)) return res.status(401).json({ error: 'Accès refusé' });
 
     const { forcedLang, channel } = req.body;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
-    res.scoopChannel = currentChannel; // 🆕 canal mémorisé pour la sauvegarde
+    res.scoopChannel = currentChannel;
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
@@ -266,7 +336,7 @@ export default async function handler(req, res) {
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique côté serveur (20 derniers messages DU CANAL) 🆕
+    // Historique côté serveur (20 derniers messages du canal)
     let fullHistory = [];
     try {
         const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20&channel=eq.${currentChannel}`, {
@@ -344,6 +414,7 @@ RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
 - Si le message en contient un → CONFIRME l'enregistrement SANS répéter le mot-clé.
 
 RÈGLE DES OUTILS :
+- get_weather : OBLIGATOIRE pour toute question météo, temps, température, pluie, vent, UV, qualité de l'air, mer, vagues (pas besoin d'ordre explicite).
 - send_email : UNIQUEMENT si "envoie un email à X" (crée un brouillon).
 - create_event : UNIQUEMENT si "ajoute un événement" (crée un brouillon).
 - search_web : UNIQUEMENT si "cherche", "recherche" (exécution directe, lecture seule).
@@ -380,6 +451,7 @@ TON RÔLE :
 - Ne répète jamais les mots-clés Memo/Val.` : null;
 
         const tools = [
+            { type: "function", function: { name: "get_weather", description: "OBLIGATOIRE pour toute question météo (temps, température, pluie, vent, UV), qualité de l'air (courir, sport, camping) ou mer/vagues. Lieu : mets le nom de ville si l'utilisateur le précise ; s'il dit 'ici'/'ma position' ou ne précise pas, laisse place vide. want_air=true si sport/air/santé ; want_marine=true si mer/vagues/plage/pêche.", parameters: { type: "object", properties: { place: { type: "string", description: "Nom de la ville OU vide pour la position actuelle" }, lat: { type: "string" }, lon: { type: "string" }, want_air: { type: "boolean" }, want_marine: { type: "boolean" } }, required: [] } } },
             { type: "function", function: { name: "send_email", description: "Crée un BROUILLON d'email (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise). Date au format JJ-MM-AA.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
@@ -394,7 +466,6 @@ TON RÔLE :
 
         const activePrompt = pending ? draftPrompt : systemPrompt;
         const activeTools = pending ? draftTools : tools;
-        const langName = currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
 
         let response = null;
         let provider = null;
@@ -531,6 +602,18 @@ TON RÔLE :
                         } catch (e) { console.error("Erreur Tavily:", e.message); }
                     }
 
+                    // 🆕 MÉTÉO : exécution directe (lecture seule) + réponse naturelle dans la langue de l'utilisateur
+                    if (functionName === "get_weather") {
+                        try {
+                            const wd = await fetchWeatherData(req, functionArgs, currentChannel);
+                            const narr = await narrateWeather(wd, userMessage, currentLang);
+                            const reply = narr || formatWeatherFallback(wd);
+                            return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
+                        } catch (e) {
+                            return respond(res, supabaseUrl, supabaseKey, userMessage, `❌ Météo indisponible : ${e.message}`, currentLang);
+                        }
+                    }
+
                     // ===== ACTIONS : CRÉATION DE BROUILLON (jamais d'exécution directe) =====
                     let draftType = null;
                     let draftPayload = {};
@@ -572,7 +655,7 @@ TON RÔLE :
     }
 }
 
-// Sauvegarde unique (user + assistant) puis réponse — avec canal 🆕
+// Sauvegarde unique (user + assistant) puis réponse — avec canal
 async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
