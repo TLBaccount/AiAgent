@@ -5,13 +5,15 @@ const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 // Clés internes : jamais montrées au LLM comme "informations"
 const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
 
-// Cascade VISION : 3 fournisseurs (clés déjà dans Vercel, aucune inscription nouvelle)
-const GEMINI_MODEL = "gemini-3.8-flash";
-const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
-const OPENROUTER_MODEL = "qwen/qwen2.5-vl-72b-instruct:free";
-
 // Sécurité anti-timeout Vercel : au max 3 informations enregistrées par photo
 const MAX_SECRETS_SAVED = 3;
+
+// Mémoire des modèles détectés (10 minutes) pour ne pas redemander à chaque fois
+const CACHE_TTL = 600000;
+let groqVisionModel = null;
+let groqModelAt = 0;
+let orVisionModel = null;
+let orModelAt = 0;
 
 const MEMO_OK = {
     fr: "\n\n✅ J'ai bien enregistré ces informations en mémoire.",
@@ -37,6 +39,67 @@ async function fetchT(url, options, ms) {
     const opts = Object.assign({}, options || {}, { signal: AbortSignal.timeout(ms) });
     return fetch(url, opts);
 }
+
+// ===== AUTO-DÉTECTION DES MODÈLES VISION (les IDs gratuits changent souvent) =====
+
+// Groq : liste officielle des modèles de ta clé
+async function getGroqVisionModel(groqKey) {
+    if (groqVisionModel && (Date.now() - groqModelAt) < CACHE_TTL) return groqVisionModel;
+    try {
+        const r = await fetchT("https://api.groq.com/openai/v1/models", {
+            headers: { "Authorization": "Bearer " + groqKey }
+        }, 3000);
+        if (!r.ok) return null;
+        const d = await r.json();
+        const ids = (d.data || []).map(m => m.id);
+        const prefs = ["llama-4-scout", "llama-4-maverick", "scout", "maverick", "vision"];
+        let best = null, bestRank = 99;
+        for (const id of ids) {
+            for (let i = 0; i < prefs.length; i++) {
+                if (id.includes(prefs[i])) { if (i < bestRank) { bestRank = i; best = id; } break; }
+            }
+        }
+        if (best) {
+            groqVisionModel = best;
+            groqModelAt = Date.now();
+            console.log("Vision: Groq model auto-detecte -> " + best);
+        }
+        return best;
+    } catch (e) { return null; }
+}
+
+// OpenRouter : liste publique des modèles gratuits avec entrée image
+async function getOpenRouterVisionModel() {
+    if (orVisionModel && (Date.now() - orModelAt) < CACHE_TTL) return orVisionModel;
+    try {
+        const r = await fetchT("https://openrouter.ai/api/v1/models", {}, 3000);
+        if (!r.ok) return null;
+        const d = await r.json();
+        const matches = (d.data || []).filter(m =>
+            m.id && m.id.endsWith(":free") &&
+            m.architecture && Array.isArray(m.architecture.input_modalities) &&
+            m.architecture.input_modalities.includes("image")
+        ).map(m => m.id);
+        const prefs = ["gemini-2.0-flash-exp", "qwen", "mistral", "pixtral", "llama", "vision"];
+        let best = null, bestRank = 99;
+        for (const id of matches) {
+            let rank = 99;
+            for (let i = 0; i < prefs.length; i++) {
+                if (id.includes(prefs[i])) { rank = i; break; }
+            }
+            if (rank < bestRank) { bestRank = rank; best = id; }
+        }
+        if (!best && matches.length > 0) best = matches[0];
+        if (best) {
+            orVisionModel = best;
+            orModelAt = Date.now();
+            console.log("Vision: OpenRouter model auto-detecte -> " + best);
+        }
+        return best;
+    } catch (e) { return null; }
+}
+
+// ===== LECTURE DES RÉPONSES =====
 
 function extractReplyGemini(apiData) {
     let out = "";
@@ -76,7 +139,7 @@ async function tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 
             systemInstruction: { parts: [{ text: systemPrompt }] },
             generationConfig: { maxOutputTokens: maxTokens }
         };
-        const r = await fetchT("https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + geminiKey, {
+        const r = await fetchT("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + geminiKey, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body)
@@ -89,7 +152,6 @@ async function tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 
         const text = extractReplyGemini(d);
         return text ? text : null;
     } catch (e) {
-        // Lent, bloqué ou coupé -> la cascade essaie le suivant
         console.error("Vision Gemini -> " + e.message);
         return null;
     }
@@ -140,21 +202,26 @@ async function tryOpenAICompat(name, url, key, model, systemPrompt, instruction,
     }
 }
 
-// Cascade complète : renvoie { ok, text, provider }
+// Cascade complète : la détection des modèles Groq/OpenRouter démarre EN PARALLÈLE avec Gemini
 async function callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens) {
+    const pGroq = groqKey ? getGroqVisionModel(groqKey) : Promise.resolve(null);
+    const pOr = orKey ? getOpenRouterVisionModel() : Promise.resolve(null);
+
     // 1) Gemini (meilleur OCR arabe/français) — 6s
     if (geminiKey) {
         const t = await tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
         if (t) return { ok: true, text: t, provider: "Gemini" };
     }
-    // 2) Groq (vision llama-4-scout) — 6s
+    // 2) Groq avec modèle détecté automatiquement — 6s
     if (groqKey) {
-        const t = await tryOpenAICompat("Groq", "https://api.groq.com/openai/v1/chat/completions", groqKey, GROQ_MODEL, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
+        const gm = (await pGroq) || "meta-llama/llama-4-scout-17b-16e-instruct";
+        const t = await tryOpenAICompat("Groq", "https://api.groq.com/openai/v1/chat/completions", groqKey, gm, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
         if (t) return { ok: true, text: t, provider: "Groq" };
     }
-    // 3) OpenRouter (modèle gratuit) — 5s
+    // 3) OpenRouter avec modèle gratuit détecté automatiquement — 5s
     if (orKey) {
-        const t = await tryOpenAICompat("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", orKey, OPENROUTER_MODEL, systemPrompt, instruction, mime, base64Img, 5000, maxTokens);
+        const om = (await pOr) || "meta-llama/llama-3.2-11b-vision-instruct:free";
+        const t = await tryOpenAICompat("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", orKey, om, systemPrompt, instruction, mime, base64Img, 5000, maxTokens);
         if (t) return { ok: true, text: t, provider: "OpenRouter" };
     }
     return { ok: false, text: "", provider: null };
@@ -311,7 +378,7 @@ export default async function handler(req, res) {
             }
         }
 
-        // 6. CASCADE : Gemini -> Groq -> OpenRouter
+        // 6. CASCADE : Gemini -> Groq -> OpenRouter (modèles auto-détectés)
         const gRes = await callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens);
         if (!gRes.ok) {
             console.error("Vision: tous les fournisseurs ont échoué");
@@ -354,7 +421,6 @@ export default async function handler(req, res) {
         botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
         botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         if (isMemoMode) {
-            // Nettoyage memo/val UNIQUEMENT en mode memo (jamais sur une fiche : un hashtag pourrait contenir "val")
             botText = botText.replace(/\bmemo\b/gi, "").trim();
             botText = botText.replace(/\bval\b/gi, "").trim();
         }
