@@ -64,76 +64,87 @@ function extractReplyOpenAI(apiData) {
 
 // ----- Fournisseur 1 : GEMINI (inline_data) -----
 async function tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, ms, maxTokens) {
-    const body = {
-        contents: [{
-            role: "user",
-            parts: [
-                { inline_data: { mime_type: mime, data: base64Img } },
-                { text: instruction }
-            ]
-        }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { maxOutputTokens: maxTokens }
-    };
-    const r = await fetchT("https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + geminiKey, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    }, ms);
-    if (!r.ok) {
-        console.error("Vision Gemini -> " + r.status);
+    try {
+        const body = {
+            contents: [{
+                role: "user",
+                parts: [
+                    { inline_data: { mime_type: mime, data: base64Img } },
+                    { text: instruction }
+                ]
+            }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            generationConfig: { maxOutputTokens: maxTokens }
+        };
+        const r = await fetchT("https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent?key=" + geminiKey, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        }, ms);
+        if (!r.ok) {
+            console.error("Vision Gemini -> " + r.status);
+            return null;
+        }
+        const d = await r.json();
+        const text = extractReplyGemini(d);
+        return text ? text : null;
+    } catch (e) {
+        // Lent, bloqué ou coupé -> on laisse la cascade essayer le suivant
+        console.error("Vision Gemini -> " + e.message);
         return null;
     }
-    const d = await r.json();
-    const text = extractReplyGemini(d);
-    return text ? text : null;
 }
 
 // ----- Fournisseurs 2 et 3 : GROQ et OPENROUTER (format OpenAI, image en data-URI) -----
 async function tryOpenAICompat(name, url, key, model, systemPrompt, instruction, mime, base64Img, ms, maxTokens) {
-    const dataUri = "data:" + mime + ";base64," + base64Img;
-    const body = {
-        model: model,
-        max_tokens: maxTokens,
-        messages: [
-            { role: "system", content: systemPrompt },
-            {
-                role: "user",
-                content: [
-                    { type: "text", text: instruction },
-                    { type: "image_url", image_url: { url: dataUri } }
-                ]
-            }
-        ]
-    };
-    const headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + key
-    };
-    if (name === "OpenRouter") {
-        headers["HTTP-Referer"] = "https://ai-agent-tlb-agent.vercel.app";
-        headers["X-Title"] = "Scoop";
-    }
-    const r = await fetchT(url, {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify(body)
-    }, ms);
-    if (!r.ok) {
-        const t = await r.text();
-        console.error("Vision " + name + " (" + model + ") -> " + r.status + " " + t.substring(0, 150));
+    try {
+        const dataUri = "data:" + mime + ";base64," + base64Img;
+        const body = {
+            model: model,
+            max_tokens: maxTokens,
+            messages: [
+                { role: "system", content: systemPrompt },
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: instruction },
+                        { type: "image_url", image_url: { url: dataUri } }
+                    ]
+                }
+            ]
+        };
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + key
+        };
+        if (name === "OpenRouter") {
+            headers["HTTP-Referer"] = "https://ai-agent-tlb-agent.vercel.app";
+            headers["X-Title"] = "Scoop";
+        }
+        const r = await fetchT(url, {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify(body)
+        }, ms);
+        if (!r.ok) {
+            const t = await r.text();
+            console.error("Vision " + name + " (" + model + ") -> " + r.status + " " + t.substring(0, 150));
+            return null;
+        }
+        const d = await r.json();
+        const text = extractReplyOpenAI(d);
+        return text ? text : null;
+    } catch (e) {
+        console.error("Vision " + name + " -> " + e.message);
         return null;
     }
-    const d = await r.json();
-    const text = extractReplyOpenAI(d);
-    return text ? text : null;
 }
 
 // Cascade complète : renvoie { ok, text, provider }
 async function callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens) {
-    // 1) Gemini (meilleur OCR arabe/français) — 5s
+    // 1) Gemini (meilleur OCR arabe/français) — 6s
     if (geminiKey) {
-        const t = await tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 5000, maxTokens);
+        const t = await tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
         if (t) return { ok: true, text: t, provider: "Gemini" };
     }
     // 2) Groq (vision llama-4-scout) — 6s
@@ -180,7 +191,7 @@ export default async function handler(req, res) {
         const fRes = await fetchT(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`, {}, 3000);
         const fData = await fRes.json();
         const filePath = fData.result.file_path;
-        const imgRes = await fetchT(`https://api.telegram.org/file/bot${token}/${filePath}`, {}, 4000);
+        const imgRes = await fetchT(`https://api.telegram.org/file/bot${token}/${filePath}`, {}, 3000);
         const base64Img = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
 
         const lower = String(filePath).toLowerCase();
@@ -291,116 +302,4 @@ export default async function handler(req, res) {
             systemPrompt += "RÈGLE DE LANGUE : par défaut, réponds entièrement en " + langName + ".\n";
             systemPrompt += 'EXCEPTION PRIORITAIRE : si la demande exige explicitement une autre langue (ex: "en AR", "in English", "réponds en espagnol"), obéis : réponds dans la langue demandée. Ne dis JAMAIS que tu ne peux pas.\n';
             systemPrompt += "- Chaleureux, précis, concis (max 15 lignes).\n";
-            systemPrompt += "- Si la photo contient du texte (document, facture, panneau...), cite les éléments importants (montants, dates, noms).\n";
-            systemPrompt += "- N'invente JAMAIS ce que tu ne vois pas.\n";
-            systemPrompt += "- INTERDIT : parler d'envoi d'email, d'agenda ou d'exécution d'action à cause de la photo.\n\n";
-            systemPrompt += "INFORMATIONS (non-secrètes) :\n" + publicText + "\n";
-            if (privateText) {
-                systemPrompt += "\nSECRETS (protégés) :\n" + privateText + "\n";
-            }
-        }
-
-        // 6. CASCADE : Gemini -> Groq -> OpenRouter
-        const gRes = await callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens);
-        if (!gRes.ok) {
-            console.error("Vision: tous les fournisseurs ont échoué");
-            return res.status(200).json({ reply: "❌ Le service d'analyse d'images est surchargé pour l'instant. Renvoie la photo dans quelques minutes.", lang: lang });
-        }
-        console.log("Vision via " + gRes.provider);
-        const rawText = gRes.text;
-
-        // 7. Lecture de la réponse
-        let botText = "";
-        let savedCount = 0;
-        if (isMemoMode) {
-            const parsed = extractJson(rawText);
-            if (parsed) {
-                botText = String(parsed.reply || "").trim();
-                const secrets = Array.isArray(parsed.secrets) ? parsed.secrets : [];
-                let i = 0;
-                for (const s of secrets) {
-                    if (i >= MAX_SECRETS_SAVED) break;
-                    if (!s.key || s.value === undefined || s.value === null) continue;
-                    const isSecretFinal = hasMemo ? true : !!s.is_secret;
-                    const ok = await upsertSecret(supabaseKey, "fatah", String(s.key), String(s.value), isSecretFinal);
-                    if (ok) { savedCount++; i++; }
-                }
-            } else {
-                botText = rawText.trim();
-            }
-            if (savedCount > 0) {
-                botText += (MEMO_OK[lang] || MEMO_OK.fr);
-            } else {
-                botText += (MEMO_KO[lang] || MEMO_KO.fr);
-            }
-        } else {
-            botText = rawText;
-        }
-
-        if (!botText) botText = "Je n'ai rien pu lire sur cette photo.";
-
-        // 8. Nettoyage
-        botText = botText.replace(/\[\[LANG:(fr|en|ar)\]\]/g, "").trim();
-        botText = botText.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
-        if (isMemoMode) {
-            // Nettoyage memo/val UNIQUEMENT en mode memo (jamais sur une fiche : un hashtag pourrait contenir "val")
-            botText = botText.replace(/\bmemo\b/gi, "").trim();
-            botText = botText.replace(/\bval\b/gi, "").trim();
-        }
-        botText = botText.replace(/[ \t]+/g, " ");
-        botText = botText.replace(/\n{3,}/g, "\n\n");
-        botText = botText.trim();
-        if (isFicheMode && botText.length > 3800) {
-            botText = botText.substring(0, 3800) + "\n\n[...]";
-        }
-
-        // 9. Sauvegarde de la conversation
-        let userMsg = "📷 Photo";
-        if (isFicheMode) userMsg = "📷 Photo + fiche produit";
-        else if (capText) userMsg = `📷 Photo + « ${capText} »`;
-        try {
-            await fetchT(`${supabaseUrl}/rest/v1/messages`, {
-                method: "POST",
-                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-                body: JSON.stringify([
-                    { role: "user", content: userMsg, channel: currentChannel },
-                    { role: "assistant", content: botText, channel: currentChannel }
-                ])
-            }, 2500);
-        } catch (e) {}
-
-        return res.status(200).json({ reply: botText, lang: lang, provider: gRes.provider });
-
-    } catch (error) {
-        console.error("Erreur vision:", error.message);
-        return res.status(200).json({ reply: "❌ Erreur pendant l'analyse de la photo.", lang: "fr" });
-    }
-}
-
-// Anti-écrasement multi-valeurs (même logique que chat.js)
-async function upsertSecret(supabaseKey, userId, key, value, isSecret) {
-    try {
-        const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
-        const existingRes = await fetchT(`${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        }, 2500);
-        const existing = await existingRes.json();
-        const match = Array.isArray(existing) ? existing.find(row => (isArabicScript(row.value) ? 'ar' : 'latin') === scriptOfNew) : null;
-        if (match) {
-            await fetchT(`${supabaseUrl}/rest/v1/secrets?id=eq.${match.id}`, {
-                method: "PATCH",
-                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ value: value, is_secret: isSecret })
-            }, 2500);
-        } else {
-            await fetchT(`${supabaseUrl}/rest/v1/secrets`, {
-                method: "POST",
-                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-                body: JSON.stringify({ user_id: userId, key: key, value: value, is_secret: isSecret })
-            }, 2500);
-        }
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
+            systemPrompt += "- Si la photo contient du texte (document, facture, panneau...), cite les
