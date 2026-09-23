@@ -239,7 +239,7 @@ export default async function handler(req, res) {
             systemPrompt += "Tu réponds en JSON STRICT, rien d'autre que ce JSON :\n";
             systemPrompt += '{"reply": "...", "secrets": [{"key": "...", "value": "...", "is_secret": true}]}\n\n';
             systemPrompt += "CONTENU DE \"reply\" :\n";
-            systemPrompt += "- Ta réponse à la demande de la légende, EXCLUSIVEMENT en " + langName + ".\n";
+            systemPrompt += "- Ta réponse à la demande de la légende, en " + langName + " par défaut, ou dans la langue explicitement demandée par l'utilisateur.\n";
             systemPrompt += "- Précis, concis (max 12 lignes). Cite les éléments importants (montants, dates, noms) si la photo en contient.\n";
             systemPrompt += "- N'invente JAMAIS. Pas de confirmation d'enregistrement (elle est ajoutée automatiquement après).\n\n";
             systemPrompt += "CONTENU DE \"secrets\" :\n";
