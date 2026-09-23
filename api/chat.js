@@ -79,65 +79,118 @@ function normalizeDate(d) {
     return s;
 }
 
-// Convertit une expression de temps en date ISO. Algérie = UTC+1 fixe (pas de changement d'heure).
-function convertWhen(when) {
+// ===== HEURE D'ALGER (UTC+1 permanent) : utilitaires =====
+function algiersParts(d) {
+    const fmt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Algiers', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    const p = {};
+    for (const { type, value } of fmt.formatToParts(d)) p[type] = value;
+    return { y: +p.year, mo: +p.month, d: +p.day, h: +(p.hour === '24' ? 0 : p.hour), mi: +p.minute };
+}
+// Construit l'instant UTC à partir d'une heure "murale" d'Alger
+function algiersWallToUtc(y, mo, d, h, mi) {
+    return new Date(Date.UTC(y, mo - 1, d, h, mi, 0) - 60 * 60000);
+}
+function fmtAlgiers(d) {
+    const p = algiersParts(d);
+    const dd = String(p.d).padStart(2, '0');
+    const mm = String(p.mo).padStart(2, '0');
+    const yy = String(p.y).slice(2);
+    const hh = String(p.h).padStart(2, '0');
+    const mi = String(p.mi).padStart(2, '0');
+    return `${dd}-${mm}-${yy} ${hh}:${mi}`;
+}
+
+// ===== PARSING DU MOMENT (côté serveur, JAMAIS par le LLM) =====
+const DAY_FR = { "dimanche": 0, "lundi": 1, "mardi": 2, "mercredi": 3, "jeudi": 4, "vendredi": 5, "samedi": 6 };
+const DAY_EN = { "sunday": 0, "monday": 1, "tuesday": 2, "wednesday": 3, "thursday": 4, "friday": 5, "saturday": 6 };
+
+function parseWhenToUtc(when) {
     if (!when) return null;
-    const s = String(when).trim().toLowerCase();
-    const OFF = 60 * 60000; // décalage UTC+1
+    let s = String(when).toLowerCase().trim();
+    s = s.replace(/[.,;!?،؟]/g, ' ').replace(/\s+/g, ' ');
+    const now = new Date();
+    const np = algiersParts(now);
 
-    if (/\b(maintenant|tout de suite|now)\b/.test(s)) return new Date().toISOString();
-
-    // "dans X minutes/heures"
-    let m = s.match(/\bdans\s+(\d{1,3})\s*(min\b|minutes?\b|heures?\b|h\b)/);
+    // 1) Durées : "dans 2 heures", "in 30 minutes", "dans 3 jours"
+    let m = s.match(/(?:dans|in|after|بعد)\s*(\d{1,3})\s*(minutes?|mins?|min|heures?|hrs?|h|jours?|days?|j)\b/);
     if (m) {
         const n = parseInt(m[1], 10);
-        const isHours = /^(heures?\b|h\b)/.test(m[2]);
-        return new Date(Date.now() + (isHours ? n * 3600000 : n * 60000)).toISOString();
+        const u = m[2];
+        let addMin = 0;
+        if (/^min/.test(u)) addMin = n;
+        else if (/^(h|heures?|hrs?)/.test(u)) addMin = n * 60;
+        else addMin = n * 1440;
+        return new Date(now.getTime() + addMin * 60000);
     }
 
-    // Date explicite : JJ-MM-AA[A] [HH:MM]
-    m = s.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})(?:[\sàa@]+(\d{1,2})\s*[:h]\s*(\d{2}))?/);
-    if (m && s.indexOf(String(m[1])) === 0 || (m && /[-\/.]/.test(s))) {
-        const yyyy = m[3].length === 2 ? "20" + m[3] : m[3];
-        const hh = m[4] ? +m[4] : 9;
-        const mi = m[5] ? +m[5] : 0;
-        return new Date(Date.UTC(+yyyy, +m[2] - 1, +m[1], hh, mi) - OFF).toISOString();
+    // 2) Heure : "15:00", "15h30", "15h", "15 heures"
+    let hours = null, minutes = 0;
+    let tm = s.match(/\b(\d{1,2})\s*[:h]\s*(\d{1,2})\b/);
+    if (tm) { hours = parseInt(tm[1], 10); minutes = parseInt(tm[2], 10); }
+    if (hours === null) {
+        tm = s.match(/\b(\d{1,2})\s*(?:heures?|hrs?|h)\b/);
+        if (tm) { hours = parseInt(tm[1], 10); minutes = 0; }
     }
+    if (hours === null && /\bmidi\b|noon/.test(s)) { hours = 12; minutes = 0; }
+    if (hours !== null && (hours > 23 || minutes > 59)) return null;
 
-    // Jour relatif
-    const shifted = new Date(Date.now() + OFF); // lire avec getUTC* = heure algérienne
-    const y = shifted.getUTCFullYear(), mo = shifted.getUTCMonth(), d = shifted.getUTCDate();
-    let daysAhead = null;
-    let defaultHour = 9;
-    if (/\b(aujourd'?hui|today)\b/.test(s)) daysAhead = 0;
-    else if (/\b(demain|tomorrow)\b/.test(s)) daysAhead = 1;
-    else if (/apr[eè]s[-\s]?demain|after\s+tomorrow/.test(s)) daysAhead = 2;
-    else if (/\b(ce soir|tonight)\b/.test(s)) { daysAhead = 0; defaultHour = 20; }
-    else {
-        const jours = [["dimanche",0],["sunday",0],["lundi",1],["monday",1],["mardi",2],["tuesday",2],["mercredi",3],["wednesday",3],["jeudi",4],["thursday",4],["vendredi",5],["friday",5],["samedi",6],["saturday",6]];
-        const dow = shifted.getUTCDay();
-        for (const [name, target] of jours) {
-            if (s.indexOf(name) !== -1) {
-                daysAhead = (target - dow + 7) % 7;
-                if (daysAhead === 0) daysAhead = 7;
-                break;
-            }
+    // 3) Date explicite ISO (2026-09-30) puis JJ-MM-AA / JJ/MM/AAAA
+    let day = null, month = null, year = null;
+    m = s.match(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/);
+    if (m) { year = parseInt(m[1], 10); month = parseInt(m[2], 10); day = parseInt(m[3], 10); }
+    if (!m) {
+        m = s.match(/\b(\d{1,2})[-\/.](\d{1,2})(?:[-\/.](\d{2,4}))?\b/);
+        if (m) {
+            day = parseInt(m[1], 10);
+            month = parseInt(m[2], 10);
+            year = m[3] ? parseInt(m[3], 10) : null;
+            if (year !== null && year < 100) year += 2000;
         }
     }
-    if (daysAhead === null) return null;
 
-    // Heure : HH:MM / 15h / 15h30
-    let hh = defaultHour, mi = 0;
-    const hm = s.match(/(\d{1,2})\s*[:h]\s*(\d{2})?/);
-    if (hm) { hh = +hm[1]; mi = hm[2] ? +hm[2] : 0; }
-    if (isNaN(hh) || hh > 23 || mi > 59) return null;
-
-    // "aujourd'hui / ce soir" : si l'heure est déjà passée → demain
-    if (daysAhead === 0) {
-        const cand = Date.UTC(y, mo, d, hh, mi) - OFF;
-        if (cand <= Date.now()) daysAhead = 1;
+    // 4) Jour de semaine (samedi, dimanche...)
+    let targetDow = null;
+    for (const [name, dow] of Object.entries(DAY_FR)) { if (s.includes(name)) { targetDow = dow; break; } }
+    if (targetDow === null) {
+        for (const [name, dow] of Object.entries(DAY_EN)) { if (s.includes(name)) { targetDow = dow; break; } }
     }
-    return new Date(Date.UTC(y, mo, d + daysAhead, hh, mi) - OFF).toISOString();
+
+    // 5) Jour relatif
+    let dayOffset = null;
+    if (/apr[èe]s[\s-]*demain|after\s*tomorrow/.test(s)) dayOffset = 2;
+    else if (/demain|tomorrow/.test(s)) dayOffset = 1;
+    else if (/ce\s*soir|aujourd'?hui|today/.test(s)) dayOffset = 0;
+
+    if (day !== null) {
+        if (month === null || day < 1 || day > 31 || month < 1 || month > 12) return null;
+        const y = year !== null ? year : np.y;
+        const h = hours !== null ? hours : 9;
+        const due = algiersWallToUtc(y, month, day, h, minutes);
+        if (due.getTime() < now.getTime() && year === null) return algiersWallToUtc(y + 1, month, day, h, minutes);
+        return due;
+    }
+
+    if (targetDow !== null) {
+        const curDow = new Date(Date.UTC(np.y, np.mo - 1, np.d)).getUTCDay();
+        let diff = (targetDow - curDow + 7) % 7;
+        const h = hours !== null ? hours : 9;
+        if (diff === 0 && (hours === null || (h * 60 + minutes) <= (np.h * 60 + np.mi))) diff = 7;
+        return algiersWallToUtc(np.y, np.mo, np.d + diff, h, minutes);
+    }
+
+    if (dayOffset !== null || hours !== null) {
+        if (hours === null && dayOffset === null) return null;
+        const h = hours !== null ? hours : 9;
+        let off = dayOffset !== null ? dayOffset : 0;
+        if (dayOffset === null || dayOffset === 0) {
+            if ((h * 60 + minutes) <= (np.h * 60 + np.mi)) off += 1; // déjà passé → demain
+        }
+        return algiersWallToUtc(np.y, np.mo, np.d + off, h, minutes);
+    }
+    return null;
 }
 
 function missingFields(type, payload) {
@@ -160,8 +213,10 @@ function buildSummary(actionType, payload, lang) {
         lines.push(`• ${t.lbl.share_type} : ${payload.share_type || ""}`);
         lines.push(`• ${t.lbl.content} : ${String(payload.content || "").substring(0, 100)}`);
     } else if (actionType === "reminder") {
-        lines.push(`• ${t.lbl.label} : ${payload.label || ""}`);
+        lines.push(`• ${t.lbl.label} : ${String(payload.label || "").substring(0, 100)}`);
         lines.push(`• ${t.lbl.when} : ${payload.when || ""}`);
+        const due = parseWhenToUtc(payload.when);
+        lines.push(due ? `• 🔔 Sonnerie : ${fmtAlgiers(due)}` : `• 🔔 ⚠️ moment non reconnu`);
     }
     return `${kind}\n${lines.join("\n")}\n\n${t.confirmQ}`;
 }
@@ -189,7 +244,14 @@ async function getPendingAction(supabaseUrl, supabaseKey) {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const data = await res.json();
-        return Array.isArray(data) && data.length > 0 ? data[0] : null;
+        if (!Array.isArray(data) || data.length === 0) return null;
+        const row = data[0];
+        const age = Date.now() - new Date(row.updated_at).getTime();
+        if (age > 24 * 60 * 60 * 1000) { // expiration 24h
+            await deletePendingAction(supabaseUrl, supabaseKey, row.id);
+            return null;
+        }
+        return row;
     } catch (e) { return null; }
 }
 
@@ -202,7 +264,7 @@ async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) 
         await fetch(`${supabaseUrl}/rest/v1/pending_actions`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft", updated_at: new Date().toISOString() })
+            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft" })
         });
     } catch (e) { console.error("Erreur savePendingAction:", e.message); }
 }
@@ -220,14 +282,13 @@ async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
 async function deletePendingAction(supabaseUrl, supabaseKey, id) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
-            method: "DELETE",
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
     } catch (e) { console.error("Erreur deletePendingAction:", e.message); }
 }
 
 // ===== EXÉCUTION (UNIQUEMENT après confirmation serveur) =====
-async function executeWorkflowAction(actionType, payload) {
+async function executeWorkflowAction(actionType, payload, supabaseKey, chatId) {
     try {
         if (actionType === "email") {
             const url = process.env.ACTIVEPIECES_EMAIL_URL;
@@ -249,20 +310,6 @@ async function executeWorkflowAction(actionType, payload) {
             let d = null; try { d = await r.json(); } catch (e) {}
             return { ok: r.ok, result: (d && d.result) || null };
         }
-        if (actionType === "reminder") {
-            const dueIso = convertWhen(payload.when);
-            if (!dueIso) return { ok: false, error: "Je n'ai pas compris le moment du rappel. Reformule (ex: demain 15:00)" };
-            const whenNice = new Date(dueIso).toLocaleString('fr-FR', { timeZone: 'Africa/Algiers', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-            const sbKey = process.env.SUPABASE_SERVICE_KEY;
-            const chatId = process.env.TELEGRAM_CHAT_ID || "1609620985";
-            const ins = await fetch(`${supabaseUrl}/rest/v1/reminders`, {
-                method: "POST",
-                headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-                body: JSON.stringify({ text: payload.label, due_at: dueIso, chat_id: chatId })
-            });
-            if (!ins.ok) return { ok: false, error: "Échec de l'enregistrement du rappel" };
-            return { ok: true, result: `Rappel enregistré pour ${whenNice}` };
-        }
         if (actionType === "share") {
             let parsed;
             try { parsed = JSON.parse(payload.content); } catch (e) { return { ok: false, error: "Données invalides (JSON)" }; }
@@ -281,6 +328,21 @@ async function executeWorkflowAction(actionType, payload) {
             }
             return { ok: false, error: d.error || "Échec du partage" };
         }
+        if (actionType === "reminder") {
+            const due = parseWhenToUtc(payload.when);
+            if (!due) return { ok: false, error: "Moment non reconnu" };
+            const r = await fetch(`${supabaseUrl}/rest/v1/reminders`, {
+                method: "POST",
+                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+                body: JSON.stringify({ text: payload.label, due_at: due.toISOString(), chat_id: chatId || null })
+            });
+            if (!r.ok) {
+                let errTxt = ""; try { errTxt = await r.text(); } catch (e) {}
+                console.error("Erreur insertion reminder:", r.status, errTxt.substring(0, 200));
+                return { ok: false, error: "Échec de l'enregistrement du rappel" };
+            }
+            return { ok: true, result: `Rappel enregistré pour ${fmtAlgiers(due)} (sonnerie à ±15 min)` };
+        }
         return { ok: false, error: "Type d'action inconnu" };
     } catch (e) {
         return { ok: false, error: e.message };
@@ -295,6 +357,9 @@ export default async function handler(req, res) {
     const currentChannel = channel === "telegram" ? "telegram" : "web";
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
+
+    // chat Telegram (transmis par telegram.js si disponible ; sinon le réveil utilisera le chat par défaut)
+    const tgChatId = req.body.chat_id ? String(req.body.chat_id) : null;
 
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
@@ -335,6 +400,9 @@ export default async function handler(req, res) {
     // Les secrets ne sortent QUE si l'utilisateur dit "Scoop"
     const wantsSecrets = /\bscoop\b/i.test(userMessage);
 
+    // Intention rappel (filet de sécurité : renforce la consigne, ne crée JAMAIS directement)
+    const reminderIntent = /rappelle[\s-]*moi|remind\s+me|ذكّ?رني|تذكير/i.test(userMessage);
+
     const secrets = await getSecrets(supabaseUrl, supabaseKey);
     const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
     const privateSecrets = wantsSecrets && Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
@@ -373,7 +441,16 @@ export default async function handler(req, res) {
             if (missing.length > 0) {
                 return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
             }
-            const exec = await executeWorkflowAction(pending.action_type, pending.payload || {});
+            // Spécial rappel : le moment doit être compréhensible AVANT d'enregistrer
+            if (pending.action_type === "reminder" && !parseWhenToUtc((pending.payload || {}).when)) {
+                const msg = currentLang === "en"
+                    ? `⚠️ I didn't understand the moment "${(pending.payload || {}).when || ""}". Specify it (e.g. tomorrow 15:00, in 2 hours, saturday 10:00).`
+                    : currentLang === "ar"
+                        ? `⚠️ لم أفهم الوقت المحدد. حدده بوضوح (مثال: غدا 15:00، بعد ساعتين، السبت 10:00).`
+                        : `⚠️ Je n'ai pas compris le moment « ${(pending.payload || {}).when || ""} ». Précise-le (ex: demain 15:00, dans 2 heures, samedi 10:00).`;
+                return respond(res, supabaseUrl, supabaseKey, userMessage, msg, currentLang);
+            }
+            const exec = await executeWorkflowAction(pending.action_type, pending.payload || {}, supabaseKey, tgChatId);
             await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
             const reply = exec.ok ? (exec.result ? `✅ ${exec.result}` : t.confirmed) : `❌ ${exec.error || "Échec de l'action."}`;
             return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
@@ -394,7 +471,7 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 
         const workflowRules = `
 RÈGLE ABSOLUE DES ACTIONS (WORKFLOW) :
-- send_email / create_event / share_data / create_reminder ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
+- send_email / create_event / share_data ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
 - Pour les dates, DEMANDE à l'utilisateur le format JJ-MM-AA (ex: 30-09-26).
 - Pose UNE SEULE question à la fois pour obtenir les champs manquants. N'invente JAMAIS une valeur.
 - Le système affiche le résumé et demande la confirmation (oui/non) : géré automatiquement.
@@ -407,6 +484,13 @@ FORMAT (data_json = chaîne JSON) :
 - "chart" : {"chartType": "bar", "labels": ["Jan"], "datasets": [{"label": "Ventes", "data": [10]}]}
 - "json" : {"headers": ["Col1"], "rows": [["a"]]}
 - "text" : {"content": "Note 1\\nNote 2"}`;
+
+        const reminderRules = `
+RÈGLE DES RAPPELS :
+- Si l'utilisateur demande un rappel ("rappelle-moi de...", "remind me to...", "ذكرني..."), appelle TOUJOURS l'outil create_reminder.
+- label = ce dont il faut se rappeler (court). when = le moment EXACT repris du message, en français ou anglais canonique : "demain 15:00", "dans 2 heures", "samedi 10:00", "30-09-26 15:00", "15:00".
+- La date de sonnerie est calculée par le SYSTÈME (heure d'Algérie) : ne la calcule jamais toi-même, n'écris jamais de date dans ta réponse.
+- L'outil crée un BROUILLON : la confirmation est gérée automatiquement.`;
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
@@ -421,7 +505,7 @@ RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
 RÈGLE DES OUTILS :
 - send_email : UNIQUEMENT si "envoie un email à X" (crée un brouillon).
 - create_event : UNIQUEMENT si "ajoute un événement" (crée un brouillon).
-- create_reminder : UNIQUEMENT si l'utilisateur demande un RAPPEL FUTUR ("rappelle-moi de...", "remind me to..."). "when" = moment clair (ex: "demain 15:00", "samedi 10:00", "30-09-26 15:00"), "label" = ce qu'il faut faire (crée un brouillon).
+- create_reminder : UNIQUEMENT si l'utilisateur demande un rappel (crée un brouillon).
 - search_web : UNIQUEMENT si "cherche", "recherche" (exécution directe, lecture seule).
 - shorten_url : raccourcit une URL.
 - share_data : UNIQUEMENT si demande EXPLICITE de tableau/graphique/partage (crée un brouillon).
@@ -431,6 +515,7 @@ RÈGLE DES OUTILS :
 RÈGLE DES SECRETS :
 - Les informations NON-SECRÈTES ci-dessous sont PUBLIQUES : donne-les sans condition.
 - Les SECRETS ne sont révélés QUE si l'utilisateur dit "Scoop".
+${reminderIntent ? "\n⚠️ CE MESSAGE EST UNE DEMANDE DE RAPPEL : appelle OBLIGATOIREMENT l'outil create_reminder (label + when). Ne réponds PAS en texte simple." : ""}
 
 INFORMATIONS (non-secrètes) :
 ${publicText}
@@ -438,6 +523,7 @@ ${publicText}
 SECRETS (protégés par "Scoop") :
 ${privateText}
 ${workflowRules}
+${reminderRules}
 ${dataShareRules}
 ${formatRules}`;
 
@@ -458,7 +544,7 @@ TON RÔLE :
         const tools = [
             { type: "function", function: { name: "send_email", description: "Crée un BROUILLON d'email (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise). Date au format JJ-MM-AA.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
-            { type: "function", function: { name: "create_reminder", description: "Crée un BROUILLON de rappel (ne s'enregistre pas directement, confirmation requise).", parameters: { type: "object", properties: { label: { type: "string", description: "Ce qu'il faut rappeler" }, when: { type: "string", description: "Moment du rappel (ex: demain 15:00, samedi 10:00, 30-09-26 15:00)" } }, required: [] } } },
+            { type: "function", function: { name: "create_reminder", description: "Crée un BROUILLON de rappel personnel (confirmation requise). À utiliser dès que l'utilisateur dit 'rappelle-moi'.", parameters: { type: "object", properties: { label: { type: "string", description: "Ce dont il faut se rappeler (court)" }, when: { type: "string", description: "Moment EXACT en français/anglais canonique : 'demain 15:00', 'dans 2 heures', 'samedi 10:00', '30-09-26 15:00', '15:00'" } }, required: [] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
             { type: "function", function: { name: "share_data", description: "Crée un BROUILLON de partage (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string" }, data_json: { type: "string" } }, required: [] } } }
