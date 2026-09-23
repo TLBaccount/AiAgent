@@ -4,107 +4,54 @@ const agentName = "Scoop";
 const supabaseUrl = "https://pfmgkdpvqqvlznogfuzi.supabase.co";
 const siteUrl = "https://ai-agent-tlb-agent.vercel.app";
 
-// Ville par défaut ultime (si aucune ville principale enregistrée)
-const VILLE_PRINCIPALE = "sidi bel abbes";
-
-// Clés internes : jamais montrées au LLM comme "informations"
-const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
-
 function checkAuth(req) {
     const code = process.env.SCOOP_WEB_CODE;
     if (!code) return true;
     return req.headers['x-scoop-code'] === code;
 }
 
-// ===== RÉGLAGES INTERNES (pause, ville principale...) =====
-async function getInternalSetting(supabaseKey, key) {
-    try {
-        const r = await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.${key}&limit=1`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        });
-        const d = await r.json();
-        return (Array.isArray(d) && d.length > 0) ? String(d[0].value) : null;
-    } catch (e) { return null; }
-}
-
-async function setInternalSetting(supabaseKey, key, value) {
-    try {
-        await fetch(`${supabaseUrl}/rest/v1/secrets?key=eq.${key}`, {
-            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-        });
-        await fetch(`${supabaseUrl}/rest/v1/secrets`, {
-            method: "POST",
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ user_id: "fatah", key: key, value: value, is_secret: false })
-        });
-    } catch (e) { console.error("Erreur setInternalSetting:", e.message); }
-}
-
-// Géocodage léger (validation du nom de ville)
-async function geocodeCity(name) {
-    try {
-        const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=fr&format=json`);
-        if (!r.ok) return null;
-        const d = await r.json();
-        if (Array.isArray(d.results) && d.results.length > 0) {
-            const g = d.results[0];
-            return { name: g.name, country: g.country || "", lat: g.latitude, lon: g.longitude };
-        }
-        return null;
-    } catch (e) { return null; }
-}
-
 // ===== TEXTES DU WORKFLOW (multilingue) =====
 const WF = {
     fr: {
-        email: "📧 Email", calendar: "📅 Événement", share: "📊 Partage",
+        email: "📧 Email", calendar: "📅 Événement", share: "📊 Partage", reminder: "⏰ Rappel",
         confirmQ: "Confirmez-vous l'exécution ? Répondez oui ou non.",
         confirmed: "✅ Action exécutée avec succès !",
         cancelled: "❌ Brouillon annulé. Rien n'a été exécuté.",
         missing: "Il me manque :",
-        pauseOn: "⏸️ Messages automatiques en pause. Dis « reprendre messages » pour les réactiver.",
-        pauseOff: "▶️ Messages automatiques réactivés ! À demain matin ☀️",
-        cityOk: "🏙️ Ville principale : {city} ✅",
-        cityKo: "❌ Ville introuvable. Vérifie l'orthographe (ex: Oran, Tlemcen...).",
-        lbl: { to: "À", subject: "Sujet", body: "Message", title: "Titre", date: "Date", time: "Heure", share_type: "Type", content: "Données" },
+        lbl: { to: "À", subject: "Sujet", body: "Message", title: "Titre", date: "Date", time: "Heure", share_type: "Type", content: "Données", label: "Rappel", when: "Quand" },
         fields: {
             to: "l'adresse email du destinataire", subject: "le sujet", body: "le contenu du message",
             title: "le titre de l'événement", date: "la date (ex: 30-09-26)", time: "l'heure (ex: 15:00)",
-            share_type: "le type de partage (chart, json ou text)", content: "les données à partager"
+            share_type: "le type de partage (chart, json ou text)", content: "les données à partager",
+            label: "le contenu du rappel", when: "le moment (ex: demain 15:00)"
         }
     },
     en: {
-        email: "📧 Email", calendar: "📅 Event", share: "📊 Share",
+        email: "📧 Email", calendar: "📅 Event", share: "📊 Share", reminder: "⏰ Reminder",
         confirmQ: "Do you confirm execution? Reply yes or no.",
         confirmed: "✅ Action executed successfully!",
         cancelled: "❌ Draft cancelled. Nothing was executed.",
         missing: "I still need:",
-        pauseOn: "⏸️ Automatic messages paused. Say \"resume messages\" to reactivate them.",
-        pauseOff: "▶️ Automatic messages reactivated! See you tomorrow morning ☀️",
-        cityOk: "🏙️ Main city: {city} ✅",
-        cityKo: "❌ City not found. Check the spelling.",
-        lbl: { to: "To", subject: "Subject", body: "Message", title: "Title", date: "Date", time: "Time", share_type: "Type", content: "Data" },
+        lbl: { to: "To", subject: "Subject", body: "Message", title: "Title", date: "Date", time: "Time", share_type: "Type", content: "Data", label: "Reminder", when: "When" },
         fields: {
             to: "the recipient's email address", subject: "the subject", body: "the message content",
             title: "the event title", date: "the date (e.g. 30-09-26)", time: "the time (e.g. 15:00)",
-            share_type: "the share type (chart, json or text)", content: "the data to share"
+            share_type: "the share type (chart, json or text)", content: "the data to share",
+            label: "what to remind you about", when: "when (e.g. tomorrow 15:00)"
         }
     },
     ar: {
-        email: "📧 بريد إلكتروني", calendar: "📅 حدث", share: "📊 مشاركة",
+        email: "📧 بريد إلكتروني", calendar: "📅 حدث", share: "📊 مشاركة", reminder: "⏰ تذكير",
         confirmQ: "هل تؤكد التنفيذ؟ أجب بـ نعم أو لا.",
         confirmed: "✅ تم تنفيذ العملية بنجاح!",
         cancelled: "❌ تم إلغاء المسودة. لم يتم تنفيذ شيء.",
         missing: "ما زال ينقصني:",
-        pauseOn: "⏸️ تم إيقاف الرسائل التلقائية مؤقتًا. قل « استئناف الرسائل » لإعادة تنشيطها.",
-        pauseOff: "▶️ تمت إعادة تنشيط الرسائل التلقائية! إلى الغد صباحًا ☀️",
-        cityOk: "🏙️ المدينة الرئيسية: {city} ✅",
-        cityKo: "❌ لم يتم العثور على المدينة. تحقق من الإملاء.",
-        lbl: { to: "إلى", subject: "الموضوع", body: "الرسالة", title: "العنوان", date: "التاريخ", time: "الوقت", share_type: "النوع", content: "البيانات" },
+        lbl: { to: "إلى", subject: "الموضوع", body: "الرسالة", title: "العنوان", date: "التاريخ", time: "الوقت", share_type: "النوع", content: "البيانات", label: "التذكير", when: "متى" },
         fields: {
             to: "البريد الإلكتروني للمستلم", subject: "الموضوع", body: "محتوى الرسالة",
             title: "عنوان الحدث", date: "التاريخ (مثال: 30-09-26)", time: "الوقت (مثال: 15:00)",
-            share_type: "نوع المشاركة (chart أو json أو text)", content: "البيانات للمشاركة"
+            share_type: "نوع المشاركة (chart أو json أو text)", content: "البيانات للمشاركة",
+            label: "محتوى التذكير", when: "الوقت (مثال: غدا 15:00)"
         }
     }
 };
@@ -112,7 +59,8 @@ const WF = {
 const REQUIRED_FIELDS = {
     email: ["to", "subject", "body"],
     calendar: ["title", "date", "time"],
-    share: ["share_type", "content"]
+    share: ["share_type", "content"],
+    reminder: ["label", "when"]
 };
 
 // Convertit une date saisie (30-09-26, 30/09/2026, 30.09.26, 2026-09-30) en YYYY-MM-DD pour Google Calendar
@@ -129,6 +77,67 @@ function normalizeDate(d) {
     m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
     if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
     return s;
+}
+
+// Convertit une expression de temps en date ISO. Algérie = UTC+1 fixe (pas de changement d'heure).
+function convertWhen(when) {
+    if (!when) return null;
+    const s = String(when).trim().toLowerCase();
+    const OFF = 60 * 60000; // décalage UTC+1
+
+    if (/\b(maintenant|tout de suite|now)\b/.test(s)) return new Date().toISOString();
+
+    // "dans X minutes/heures"
+    let m = s.match(/\bdans\s+(\d{1,3})\s*(min\b|minutes?\b|heures?\b|h\b)/);
+    if (m) {
+        const n = parseInt(m[1], 10);
+        const isHours = /^(heures?\b|h\b)/.test(m[2]);
+        return new Date(Date.now() + (isHours ? n * 3600000 : n * 60000)).toISOString();
+    }
+
+    // Date explicite : JJ-MM-AA[A] [HH:MM]
+    m = s.match(/(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})(?:[\sàa@]+(\d{1,2})\s*[:h]\s*(\d{2}))?/);
+    if (m && s.indexOf(String(m[1])) === 0 || (m && /[-\/.]/.test(s))) {
+        const yyyy = m[3].length === 2 ? "20" + m[3] : m[3];
+        const hh = m[4] ? +m[4] : 9;
+        const mi = m[5] ? +m[5] : 0;
+        return new Date(Date.UTC(+yyyy, +m[2] - 1, +m[1], hh, mi) - OFF).toISOString();
+    }
+
+    // Jour relatif
+    const shifted = new Date(Date.now() + OFF); // lire avec getUTC* = heure algérienne
+    const y = shifted.getUTCFullYear(), mo = shifted.getUTCMonth(), d = shifted.getUTCDate();
+    let daysAhead = null;
+    let defaultHour = 9;
+    if (/\b(aujourd'?hui|today)\b/.test(s)) daysAhead = 0;
+    else if (/\b(demain|tomorrow)\b/.test(s)) daysAhead = 1;
+    else if (/apr[eè]s[-\s]?demain|after\s+tomorrow/.test(s)) daysAhead = 2;
+    else if (/\b(ce soir|tonight)\b/.test(s)) { daysAhead = 0; defaultHour = 20; }
+    else {
+        const jours = [["dimanche",0],["sunday",0],["lundi",1],["monday",1],["mardi",2],["tuesday",2],["mercredi",3],["wednesday",3],["jeudi",4],["thursday",4],["vendredi",5],["friday",5],["samedi",6],["saturday",6]];
+        const dow = shifted.getUTCDay();
+        for (const [name, target] of jours) {
+            if (s.indexOf(name) !== -1) {
+                daysAhead = (target - dow + 7) % 7;
+                if (daysAhead === 0) daysAhead = 7;
+                break;
+            }
+        }
+    }
+    if (daysAhead === null) return null;
+
+    // Heure : HH:MM / 15h / 15h30
+    let hh = defaultHour, mi = 0;
+    const hm = s.match(/(\d{1,2})\s*[:h]\s*(\d{2})?/);
+    if (hm) { hh = +hm[1]; mi = hm[2] ? +hm[2] : 0; }
+    if (isNaN(hh) || hh > 23 || mi > 59) return null;
+
+    // "aujourd'hui / ce soir" : si l'heure est déjà passée → demain
+    if (daysAhead === 0) {
+        const cand = Date.UTC(y, mo, d, hh, mi) - OFF;
+        if (cand <= Date.now()) daysAhead = 1;
+    }
+    return new Date(Date.UTC(y, mo, d + daysAhead, hh, mi) - OFF).toISOString();
 }
 
 function missingFields(type, payload) {
@@ -150,6 +159,9 @@ function buildSummary(actionType, payload, lang) {
     } else if (actionType === "share") {
         lines.push(`• ${t.lbl.share_type} : ${payload.share_type || ""}`);
         lines.push(`• ${t.lbl.content} : ${String(payload.content || "").substring(0, 100)}`);
+    } else if (actionType === "reminder") {
+        lines.push(`• ${t.lbl.label} : ${payload.label || ""}`);
+        lines.push(`• ${t.lbl.when} : ${payload.when || ""}`);
     }
     return `${kind}\n${lines.join("\n")}\n\n${t.confirmQ}`;
 }
@@ -170,50 +182,32 @@ function isCancellation(text) {
     return /^\s*(non|no|annule|annuler|annulé|cancel|stop|abandonne|abandonner|arrête|arrete)\s*[!.؟?]*\s*$/i.test(text.trim());
 }
 
-// Commandes pause / reprise / ville principale (décidées par le SERVEUR)
-function isPauseCmd(text) {
-    return /^\s*(pause|stop|arrête|arrete|stoppe)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
-}
-function isResumeCmd(text) {
-    return /^\s*(reprends?|reprendre|réactive|reactive|resume|relance)(\s+(les\s+|le\s+)?(messages?|messagerie|auto(matiques)?))?\s*[!.]*\s*$/i.test(text.trim());
-}
-function matchCityCmd(text) {
-    const m = text.trim().match(/^\s*(?:change(?:r|s|z)?(?:\s+ma)?\s+ville\s+principale(?:\s+(?:en|pour|à|:))?\s+|set\s+(?:my\s+)?(?:home|main)\s+city\s+(?:to)?\s*)([\p{L}\p{M}\s\-'’]+?)\s*[!.]*\s*$/iu);
-    return m ? m[1].trim() : null;
-}
-
 // ===== CRUD BROUILLONS (pending_actions) =====
-async function getPendingAction(supabaseKey) {
+async function getPendingAction(supabaseUrl, supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft&order=id.desc&limit=1`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const data = await res.json();
-        if (!Array.isArray(data) || data.length === 0) return null;
-        const row = data[0];
-        const age = Date.now() - new Date(row.updated_at).getTime();
-        if (age > 24 * 60 * 60 * 1000) {
-            await deletePendingAction(supabaseKey, row.id);
-            return null;
-        }
-        return row;
+        return Array.isArray(data) && data.length > 0 ? data[0] : null;
     } catch (e) { return null; }
 }
 
-async function savePendingAction(supabaseKey, actionType, payload) {
+async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) {
     try {
+        // Un seul brouillon actif : on supprime les anciens
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?status=eq.draft`, {
             method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         await fetch(`${supabaseUrl}/rest/v1/pending_actions`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft" })
+            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft", updated_at: new Date().toISOString() })
         });
     } catch (e) { console.error("Erreur savePendingAction:", e.message); }
 }
 
-async function updatePendingAction(supabaseKey, id, payload) {
+async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
             method: "PATCH",
@@ -223,10 +217,11 @@ async function updatePendingAction(supabaseKey, id, payload) {
     } catch (e) { console.error("Erreur updatePendingAction:", e.message); }
 }
 
-async function deletePendingAction(supabaseKey, id) {
+async function deletePendingAction(supabaseUrl, supabaseKey, id) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
-            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            method: "DELETE",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
     } catch (e) { console.error("Erreur deletePendingAction:", e.message); }
 }
@@ -254,6 +249,20 @@ async function executeWorkflowAction(actionType, payload) {
             let d = null; try { d = await r.json(); } catch (e) {}
             return { ok: r.ok, result: (d && d.result) || null };
         }
+        if (actionType === "reminder") {
+            const dueIso = convertWhen(payload.when);
+            if (!dueIso) return { ok: false, error: "Je n'ai pas compris le moment du rappel. Reformule (ex: demain 15:00)" };
+            const whenNice = new Date(dueIso).toLocaleString('fr-FR', { timeZone: 'Africa/Algiers', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+            const sbKey = process.env.SUPABASE_SERVICE_KEY;
+            const chatId = process.env.TELEGRAM_CHAT_ID || "1609620985";
+            const ins = await fetch(`${supabaseUrl}/rest/v1/reminders`, {
+                method: "POST",
+                headers: { "apikey": sbKey, "Authorization": `Bearer ${sbKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+                body: JSON.stringify({ text: payload.label, due_at: dueIso, chat_id: chatId })
+            });
+            if (!ins.ok) return { ok: false, error: "Échec de l'enregistrement du rappel" };
+            return { ok: true, result: `Rappel enregistré pour ${whenNice}` };
+        }
         if (actionType === "share") {
             let parsed;
             try { parsed = JSON.parse(payload.content); } catch (e) { return { ok: false, error: "Données invalides (JSON)" }; }
@@ -278,85 +287,12 @@ async function executeWorkflowAction(actionType, payload) {
     }
 }
 
-// ===== MÉTÉO : outil get_weather (lecture seule) =====
-async function fetchWeatherData(req, args, currentChannel, savedPos, homeCity) {
-    const params = new URLSearchParams();
-    if (args && args.lat && args.lon) {
-        params.set("lat", String(args.lat));
-        params.set("lon", String(args.lon));
-    } else if (args && args.place && String(args.place).trim()) {
-        params.set("place", String(args.place).trim());
-    } else if (savedPos) {
-        // position partagée sur Telegram (la plus précise)
-        params.set("lat", String(savedPos.lat));
-        params.set("lon", String(savedPos.lon));
-        params.set("place_name", "Position actuelle");
-    } else {
-        // "ici" : géoloc auto par Vercel (uniquement depuis le SITE WEB), sinon ville principale
-        const vLat = currentChannel === "web" ? req.headers["x-vercel-ip-latitude"] : null;
-        const vLon = currentChannel === "web" ? req.headers["x-vercel-ip-longitude"] : null;
-        if (vLat && vLon) {
-            params.set("lat", String(vLat));
-            params.set("lon", String(vLon));
-            let ville = "Position actuelle";
-            try { ville = decodeURIComponent(String(req.headers["x-vercel-ip-city"] || ville)); } catch (e) {}
-            params.set("place_name", ville);
-        } else {
-            params.set("place", homeCity || VILLE_PRINCIPALE);
-        }
-    }
-    if (args && (args.want_air === true || args.want_air === "true")) params.set("air", "1");
-    if (args && (args.want_marine === true || args.want_marine === "true")) params.set("marine", "1");
-    const r = await fetch(`${siteUrl}/api/weather?${params.toString()}`);
-    return await r.json();
-}
-
-function formatWeatherFallback(d) {
-    if (!d || d.error || !Array.isArray(d.meteo) || d.meteo.length === 0) {
-        return `❌ Météo indisponible${d && d.error ? " : " + d.error : ""}`;
-    }
-    const lines = [];
-    for (const m of d.meteo) {
-        lines.push(`📍 ${m.ville}${m.pays ? " (" + m.pays + ")" : ""} : ${m.maintenant.temp_c}°C, ${m.maintenant.temps}`);
-        lines.push(`   Aujourd'hui : ${m.aujourdhui.min_c}–${m.aujourdhui.max_c}°C, pluie ${m.aujourdhui.pluie_pct}%, rafales ${m.aujourdhui.rafales_kmh} km/h, UV ${m.aujourdhui.uv_max}`);
-        lines.push(`   Demain : ${m.demain.min_c}–${m.demain.max_c}°C, pluie ${m.demain.pluie_pct}%, ${m.demain.temps}`);
-    }
-    if (d.air) lines.push(`🌿 Air : indice ${d.air.aqi_europeen} — ${d.air.qualite}`);
-    if (d.mer) lines.push(`🌊 Mer : vagues ${d.mer.hauteur_vagues_m} m — ${d.mer.etat}`);
-    return lines.join("\n");
-}
-
-// Réponse naturelle dans la langue de l'utilisateur (2e passage LLM)
-async function narrateWeather(d, userMessage, lang) {
-    try {
-        const groqKey = process.env.GROQ_API_KEY;
-        if (!groqKey) return null;
-        const langName = lang === 'ar' ? 'ARABE' : lang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
-        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
-            body: JSON.stringify({
-                model: "openai/gpt-oss-20b",
-                reasoning_effort: "low",
-                messages: [
-                    { role: "system", content: `Tu es Scoop, l'assistant personnel dévoué de Fateh (utilisateur unique). Réponds EXCLUSIVEMENT en ${langName}. Utilise les données météo JSON fournies pour répondre naturellement à sa question : courte, chaleureuse, personnelle, avec UN conseil pratique basé sur air/vent/pluie/UV/vagues. Ne montre JAMAIS le JSON brut. Max 8 lignes.` },
-                    { role: "user", content: `Données météo : ${JSON.stringify(d)}\n\nQuestion de Fateh : ${userMessage}` }
-                ]
-            })
-        });
-        if (!r.ok) return null;
-        const txt = (await r.json()).choices[0].message.content.trim();
-        return txt || null;
-    } catch (e) { return null; }
-}
-
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     if (!checkAuth(req)) return res.status(401).json({ error: 'Accès refusé' });
 
     const { forcedLang, channel } = req.body;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
-    res.scoopChannel = currentChannel;
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
@@ -386,7 +322,7 @@ export default async function handler(req, res) {
     if (lowerMsg.includes(agentName.toLowerCase()) &&
         (lowerMsg.includes("quelle heure") || lowerMsg.includes("what time") || lowerMsg.includes("الساعة"))) {
         const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Algiers' });
-        return respond(res, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
+        return respond(res, supabaseUrl, supabaseKey, userMessage, `Il est actuellement ${heure}.`, "fr");
     }
 
     // Mots-clés Memo / Val
@@ -399,17 +335,16 @@ export default async function handler(req, res) {
     // Les secrets ne sortent QUE si l'utilisateur dit "Scoop"
     const wantsSecrets = /\bscoop\b/i.test(userMessage);
 
-    const secrets = await getSecrets(supabaseKey);
-    // Filtre des réglages internes : ce ne sont pas des "informations" à montrer
-    const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret && !INTERNAL_KEYS.includes(s.key)) : [];
+    const secrets = await getSecrets(supabaseUrl, supabaseKey);
+    const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
     const privateSecrets = wantsSecrets && Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique côté serveur (20 derniers messages du canal)
+    // Historique côté serveur (20 derniers messages)
     let fullHistory = [];
     try {
-        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20&channel=eq.${currentChannel}`, {
+        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
         const hData = await hRes.json();
@@ -419,52 +354,29 @@ export default async function handler(req, res) {
     try {
         if (shouldExtractSecrets) {
             const forceSecret = hasMemoKeyword ? true : false;
-            await extractSecrets(userMessage, "", supabaseKey, forceSecret);
-        }
-
-        // ===== COMMANDES SYSTÈME (décidées par le SERVEUR, avant tout le reste) =====
-        const t = WF[currentLang] || WF.fr;
-
-        // PAUSE messages automatiques
-        if (isPauseCmd(userMessage)) {
-            await setInternalSetting(supabaseKey, "pause_messages", "true");
-            return respond(res, supabaseKey, userMessage, t.pauseOn, currentLang);
-        }
-        // REPRISE messages automatiques
-        if (isResumeCmd(userMessage)) {
-            await setInternalSetting(supabaseKey, "pause_messages", "false");
-            return respond(res, supabaseKey, userMessage, t.pauseOff, currentLang);
-        }
-        // VILLE PRINCIPALE
-        const newCity = matchCityCmd(userMessage);
-        if (newCity) {
-            const g = await geocodeCity(newCity);
-            if (g) {
-                await setInternalSetting(supabaseKey, "ville_principale", g.name);
-                return respond(res, supabaseKey, userMessage, t.cityOk.replace("{city}", `${g.name}${g.country ? ", " + g.country : ""}`), currentLang);
-            }
-            return respond(res, supabaseKey, userMessage, t.cityKo, currentLang);
+            await extractSecrets(userMessage, "", supabaseUrl, supabaseKey, forceSecret);
         }
 
         // ===== WORKFLOW : BROUILLON EN COURS ? =====
-        const pending = await getPendingAction(supabaseKey);
+        const pending = await getPendingAction(supabaseUrl, supabaseKey);
+        const t = WF[currentLang] || WF.fr;
 
         // 1) ANNULATION (décidée par le SERVEUR, pas le LLM)
         if (pending && isCancellation(userMessage)) {
-            await deletePendingAction(supabaseKey, pending.id);
-            return respond(res, supabaseKey, userMessage, t.cancelled, currentLang);
+            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+            return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
         }
 
         // 2) CONFIRMATION (décidée par le SERVEUR, pas le LLM)
         if (pending && isConfirmation(userMessage)) {
             const missing = missingFields(pending.action_type, pending.payload || {});
             if (missing.length > 0) {
-                return respond(res, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
+                return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, pending.payload || {}, currentLang), currentLang);
             }
             const exec = await executeWorkflowAction(pending.action_type, pending.payload || {});
-            await deletePendingAction(supabaseKey, pending.id);
+            await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
             const reply = exec.ok ? (exec.result ? `✅ ${exec.result}` : t.confirmed) : `❌ ${exec.error || "Échec de l'action."}`;
-            return respond(res, supabaseKey, userMessage, reply, currentLang);
+            return respond(res, supabaseUrl, supabaseKey, userMessage, reply, currentLang);
         }
 
         const formatRules = currentChannel === "telegram"
@@ -482,7 +394,7 @@ RÈGLE DE FORMATAGE POUR LE WEB :
 
         const workflowRules = `
 RÈGLE ABSOLUE DES ACTIONS (WORKFLOW) :
-- send_email / create_event / share_data ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
+- send_email / create_event / share_data / create_reminder ne s'exécutent JAMAIS directement : l'outil CRÉE UN BROUILLON.
 - Pour les dates, DEMANDE à l'utilisateur le format JJ-MM-AA (ex: 30-09-26).
 - Pose UNE SEULE question à la fois pour obtenir les champs manquants. N'invente JAMAIS une valeur.
 - Le système affiche le résumé et demande la confirmation (oui/non) : géré automatiquement.
@@ -498,8 +410,7 @@ FORMAT (data_json = chaîne JSON) :
 
         const systemPrompt = `Tu es Scoop, un assistant personnel multilingue.
 
-RÈGLE DE LANGUE : Par défaut, réponds entièrement en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
-EXCEPTION PRIORITAIRE : si l'utilisateur demande explicitement une autre langue (ex: "en AR", "réponds en anglais", "in English", "بالعربية", "en español"), sa demande est PRIORITAIRE : réponds alors entièrement dans cette langue, même si elle n'est pas dans ta liste. Ne dis JAMAIS que tu ne peux pas répondre dans une langue.
+RÈGLE ABSOLUE DE LANGUE : Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 
 RÈGLE ANTI-RÉPÉTITION : Si l'utilisateur redemande la même chose, tu DOIS redonner la MÊME réponse. Ne dis JAMAIS "je ne peux pas répéter".
 
@@ -508,9 +419,9 @@ RÈGLE DES MOTS-CLÉS "MEMO" ET "VAL" :
 - Si le message en contient un → CONFIRME l'enregistrement SANS répéter le mot-clé.
 
 RÈGLE DES OUTILS :
-- get_weather : OBLIGATOIRE pour toute question météo, temps, température, pluie, vent, UV, qualité de l'air, mer, vagues (pas besoin d'ordre explicite).
 - send_email : UNIQUEMENT si "envoie un email à X" (crée un brouillon).
 - create_event : UNIQUEMENT si "ajoute un événement" (crée un brouillon).
+- create_reminder : UNIQUEMENT si l'utilisateur demande un RAPPEL FUTUR ("rappelle-moi de...", "remind me to..."). "when" = moment clair (ex: "demain 15:00", "samedi 10:00", "30-09-26 15:00"), "label" = ce qu'il faut faire (crée un brouillon).
 - search_web : UNIQUEMENT si "cherche", "recherche" (exécution directe, lecture seule).
 - shorten_url : raccourcit une URL.
 - share_data : UNIQUEMENT si demande EXPLICITE de tableau/graphique/partage (crée un brouillon).
@@ -541,25 +452,26 @@ TON RÔLE :
 - Si l'utilisateur pose une question sur le brouillon → réponds en texte, sans outil.
 - La confirmation ("oui") et l'annulation sont gérées automatiquement par le système.
 - Pose UNE SEULE question à la fois.
-- Réponds en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'} par défaut, ou dans la langue explicitement demandée par l'utilisateur.
+- Réponds EXCLUSIVEMENT en ${currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS'}.
 - Ne répète jamais les mots-clés Memo/Val.` : null;
 
         const tools = [
-            { type: "function", function: { name: "get_weather", description: "OBLIGATOIRE pour toute question météo (temps, température, pluie, vent, UV), qualité de l'air (courir, sport, camping) ou mer/vagues. Lieu : mets le nom de ville si l'utilisateur le précise ; s'il dit 'ici'/'ma position' ou ne précise pas, laisse place vide. want_air=true si sport/air/santé ; want_marine=true si mer/vagues/plage/pêche.", parameters: { type: "object", properties: { place: { type: "string", description: "Nom de la ville OU vide pour la position actuelle" }, lat: { type: "string" }, lon: { type: "string" }, want_air: { type: "boolean" }, want_marine: { type: "boolean" } }, required: [] } } },
             { type: "function", function: { name: "send_email", description: "Crée un BROUILLON d'email (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "create_event", description: "Crée un BROUILLON d'événement (ne s'exécute pas directement, confirmation requise). Date au format JJ-MM-AA.", parameters: { type: "object", properties: { title: { type: "string" }, date: { type: "string" }, time: { type: "string" } }, required: [] } } },
+            { type: "function", function: { name: "create_reminder", description: "Crée un BROUILLON de rappel (ne s'enregistre pas directement, confirmation requise).", parameters: { type: "object", properties: { label: { type: "string", description: "Ce qu'il faut rappeler" }, when: { type: "string", description: "Moment du rappel (ex: demain 15:00, samedi 10:00, 30-09-26 15:00)" } }, required: [] } } },
             { type: "function", function: { name: "search_web", description: "Cherche sur Internet UNIQUEMENT si l'utilisateur donne un ordre explicite.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
             { type: "function", function: { name: "shorten_url", description: "Raccourcit une URL longue.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
             { type: "function", function: { name: "share_data", description: "Crée un BROUILLON de partage (ne s'exécute pas directement, confirmation requise).", parameters: { type: "object", properties: { type: { type: "string", description: "Type : 'chart', 'json', ou 'text'" }, title: { type: "string" }, data_json: { type: "string" } }, required: [] } } }
         ];
 
         const draftTools = [
-            { type: "function", function: { name: "draft_action", description: "Met à jour le brouillon en cours avec les informations fournies par l'utilisateur.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, title: { type: "string" }, date: { type: "string" }, time: { type: "string" }, share_type: { type: "string" }, content: { type: "string" } }, required: [] } } },
+            { type: "function", function: { name: "draft_action", description: "Met à jour le brouillon en cours avec les informations fournies par l'utilisateur.", parameters: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, title: { type: "string" }, date: { type: "string" }, time: { type: "string" }, share_type: { type: "string" }, content: { type: "string" }, label: { type: "string" }, when: { type: "string" } }, required: [] } } },
             { type: "function", function: { name: "cancel_action", description: "Annule le brouillon en cours.", parameters: { type: "object", properties: {}, required: [] } } }
         ];
 
         const activePrompt = pending ? draftPrompt : systemPrompt;
         const activeTools = pending ? draftTools : tools;
+        const langName = currentLang === 'ar' ? 'ARABE' : currentLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
 
         let response = null;
         let provider = null;
@@ -645,16 +557,16 @@ TON RÔLE :
                 // ===== MODE BROUILLON : draft_action / cancel_action =====
                 if (pending) {
                     if (functionName === "cancel_action") {
-                        await deletePendingAction(supabaseKey, pending.id);
-                        return respond(res, supabaseKey, userMessage, t.cancelled, currentLang);
+                        await deletePendingAction(supabaseUrl, supabaseKey, pending.id);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, t.cancelled, currentLang);
                     }
                     if (functionName === "draft_action") {
                         const newPayload = { ...(pending.payload || {}) };
                         for (const [k, v] of Object.entries(functionArgs)) {
                             if (v && String(v).trim()) newPayload[k] = String(v).trim();
                         }
-                        await updatePendingAction(supabaseKey, pending.id, newPayload);
-                        return respond(res, supabaseKey, userMessage, askMissing(pending.action_type, newPayload, currentLang), currentLang);
+                        await updatePendingAction(supabaseUrl, supabaseKey, pending.id, newPayload);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(pending.action_type, newPayload, currentLang), currentLang);
                     }
                     botText = String(responseMessage.content || "").trim();
                 } else {
@@ -665,7 +577,7 @@ TON RÔLE :
                             body: JSON.stringify({ url: functionArgs.url })
                         });
                         const shortenData = await shortenRes.json();
-                        return respond(res, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
                     }
 
                     // RECHERCHE : Tavily direct (lecture seule, exécution immédiate)
@@ -691,33 +603,9 @@ TON RÔLE :
                                 } else {
                                     replyText = currentLang === "en" ? "🔎 No results found." : currentLang === "ar" ? "🔎 لا توجد نتائج." : "🔎 Aucun résultat trouvé.";
                                 }
-                                return respond(res, supabaseKey, userMessage, replyText, currentLang);
+                                return respond(res, supabaseUrl, supabaseKey, userMessage, replyText, currentLang);
                             }
                         } catch (e) { console.error("Erreur Tavily:", e.message); }
-                    }
-
-                    // MÉTÉO : exécution directe (lecture seule) + réponse naturelle
-                    if (functionName === "get_weather") {
-                        try {
-                            // Position partagée sur Telegram (clé position_actuelle)
-                            const posSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "position_actuelle") : null;
-                            let savedPos = null;
-                            if (posSecret && String(posSecret.value).includes(",")) {
-                                const parts = String(posSecret.value).split(",");
-                                const la = parseFloat(parts[0]);
-                                const lo = parseFloat(parts[1]);
-                                if (!isNaN(la) && !isNaN(lo)) savedPos = { lat: la, lon: lo };
-                            }
-                            // Ville principale enregistrée (remplace la constante)
-                            const homeSecret = Array.isArray(secrets) ? secrets.find(s => s.key === "ville_principale") : null;
-                            const homeCity = homeSecret ? String(homeSecret.value) : VILLE_PRINCIPALE;
-                            const wd = await fetchWeatherData(req, functionArgs, currentChannel, savedPos, homeCity);
-                            const narr = await narrateWeather(wd, userMessage, currentLang);
-                            const reply = narr || formatWeatherFallback(wd);
-                            return respond(res, supabaseKey, userMessage, reply, currentLang);
-                        } catch (e) {
-                            return respond(res, supabaseKey, userMessage, `❌ Météo indisponible : ${e.message}`, currentLang);
-                        }
                     }
 
                     // ===== ACTIONS : CRÉATION DE BROUILLON (jamais d'exécution directe) =====
@@ -729,6 +617,9 @@ TON RÔLE :
                     } else if (functionName === "create_event") {
                         draftType = "calendar";
                         draftPayload = { title: functionArgs.title || "", date: functionArgs.date || "", time: functionArgs.time || "" };
+                    } else if (functionName === "create_reminder") {
+                        draftType = "reminder";
+                        draftPayload = { label: functionArgs.label || "", when: functionArgs.when || "" };
                     } else if (functionName === "share_data") {
                         draftType = "share";
                         draftPayload = { share_type: functionArgs.type || "", content: functionArgs.data_json || "", title: functionArgs.title || "" };
@@ -737,8 +628,8 @@ TON RÔLE :
                         for (const k of Object.keys(draftPayload)) {
                             if (!draftPayload[k]) delete draftPayload[k];
                         }
-                        await savePendingAction(supabaseKey, draftType, draftPayload);
-                        return respond(res, supabaseKey, userMessage, askMissing(draftType, draftPayload, currentLang), currentLang);
+                        await savePendingAction(supabaseUrl, supabaseKey, draftType, draftPayload);
+                        return respond(res, supabaseUrl, supabaseKey, userMessage, askMissing(draftType, draftPayload, currentLang), currentLang);
                     }
                 }
             }
@@ -753,7 +644,7 @@ TON RÔLE :
         botText = botText.replace(/\n{3,}/g, "\n\n");
         botText = botText.trim();
 
-        return respond(res, supabaseKey, userMessage, botText, currentLang);
+        return respond(res, supabaseUrl, supabaseKey, userMessage, botText, currentLang);
 
     } catch (error) {
         console.error("Erreur serveur:", error);
@@ -761,16 +652,13 @@ TON RÔLE :
     }
 }
 
-// Sauvegarde unique (user + assistant) puis réponse — avec canal
-async function respond(res, supabaseKey, userText, botReply, lang) {
+// Sauvegarde unique (user + assistant) puis réponse
+async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify([
-                { role: "user", content: userText, channel: res.scoopChannel || "web" },
-                { role: "assistant", content: botReply, channel: res.scoopChannel || "web" }
-            ])
+            body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }])
         });
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
     return res.status(200).json({ reply: botReply, lang });
@@ -797,7 +685,7 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     } catch (error) { console.error("Erreur nettoyage:", error); }
 }
 
-async function getSecrets(supabaseKey) {
+async function getSecrets(supabaseUrl, supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
@@ -809,7 +697,7 @@ async function getSecrets(supabaseKey) {
 
 function isArabicScript(text) { return /[\u0600-\u06FF]/.test(text); }
 
-async function upsertSecret(supabaseKey, userId, key, value, isSecret) {
+async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecret) {
     const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
     const existingRes = await fetch(
         `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
@@ -834,7 +722,7 @@ async function upsertSecret(supabaseKey, userId, key, value, isSecret) {
     }
 }
 
-async function extractSecrets(message, botReply, supabaseKey, forceSecret = false) {
+async function extractSecrets(message, botReply, supabaseUrl, supabaseKey, forceSecret = false) {
     const groqKey = process.env.GROQ_API_KEY;
     if (!groqKey) return;
     try {
@@ -864,7 +752,7 @@ Réponds en JSON : {"secrets": [{"key": "...", "value": "...", "is_secret": true
         const secrets = parsed.secrets || [];
         for (const secret of secrets) {
             const finalIsSecret = forceSecret ? true : (secret.is_secret || false);
-            await upsertSecret(supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
+            await upsertSecret(supabaseUrl, supabaseKey, "fatah", secret.key, secret.value, finalIsSecret);
         }
     } catch (error) {
         console.error("Erreur extraction secrets:", error.message);
