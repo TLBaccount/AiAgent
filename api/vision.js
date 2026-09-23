@@ -8,12 +8,12 @@ const INTERNAL_KEYS = ["pause_messages", "ville_principale"];
 // Sécurité anti-timeout Vercel : au max 3 informations enregistrées par photo
 const MAX_SECRETS_SAVED = 3;
 
-// Mémoire des modèles détectés (10 minutes) pour ne pas redemander à chaque fois
+// Mémoire des modèles détectés (10 minutes)
 const CACHE_TTL = 600000;
 let groqVisionModel = null;
 let groqModelAt = 0;
-let orVisionModel = null;
-let orModelAt = 0;
+let orVisionModels = null;
+let orModelsAt = 0;
 
 const MEMO_OK = {
     fr: "\n\n✅ J'ai bien enregistré ces informations en mémoire.",
@@ -40,23 +40,23 @@ async function fetchT(url, options, ms) {
     return fetch(url, opts);
 }
 
-// ===== AUTO-DÉTECTION DES MODÈLES VISION (les IDs gratuits changent souvent) =====
+// ===== AUTO-DÉTECTION DES MODÈLES VISION =====
 
-// Groq : liste officielle des modèles de ta clé
+// Groq : le modèle vision actuel est qwen3.8-27b (llama-4-scout a été retiré)
 async function getGroqVisionModel(groqKey) {
     if (groqVisionModel && (Date.now() - groqModelAt) < CACHE_TTL) return groqVisionModel;
     try {
         const r = await fetchT("https://api.groq.com/openai/v1/models", {
             headers: { "Authorization": "Bearer " + groqKey }
         }, 3000);
-        if (!r.ok) return null;
+        if (!r.ok) return groqVisionModel;
         const d = await r.json();
-        const ids = (d.data || []).map(m => m.id);
-        const prefs = ["llama-4-scout", "llama-4-maverick", "scout", "maverick", "vision"];
+        const ids = (d.data || []).map(function(m) { return m.id; });
+        const prefs = ["qwen3.8-27b", "qwen3.8", "qwen", "llama-4-scout", "llama-4-maverick", "vision"];
         let best = null, bestRank = 99;
         for (const id of ids) {
             for (let i = 0; i < prefs.length; i++) {
-                if (id.includes(prefs[i])) { if (i < bestRank) { bestRank = i; best = id; } break; }
+                if (id.indexOf(prefs[i]) !== -1) { if (i < bestRank) { bestRank = i; best = id; } break; }
             }
         }
         if (best) {
@@ -65,38 +65,39 @@ async function getGroqVisionModel(groqKey) {
             console.log("Vision: Groq model auto-detecte -> " + best);
         }
         return best;
-    } catch (e) { return null; }
+    } catch (e) { return groqVisionModel; }
 }
 
-// OpenRouter : liste publique des modèles gratuits avec entrée image
-async function getOpenRouterVisionModel() {
-    if (orVisionModel && (Date.now() - orModelAt) < CACHE_TTL) return orVisionModel;
+// OpenRouter : jusqu'à 3 modèles gratuits avec support image, du moins saturé au plus saturé
+async function getOpenRouterVisionModels() {
+    if (orVisionModels && orVisionModels.length > 0 && (Date.now() - orModelsAt) < CACHE_TTL) return orVisionModels;
     try {
         const r = await fetchT("https://openrouter.ai/api/v1/models", {}, 3000);
-        if (!r.ok) return null;
+        if (!r.ok) return orVisionModels || [];
         const d = await r.json();
-        const matches = (d.data || []).filter(m =>
-            m.id && m.id.endsWith(":free") &&
-            m.architecture && Array.isArray(m.architecture.input_modalities) &&
-            m.architecture.input_modalities.includes("image")
-        ).map(m => m.id);
-        const prefs = ["gemini-2.0-flash-exp", "qwen", "mistral", "pixtral", "llama", "vision"];
-        let best = null, bestRank = 99;
+        const matches = (d.data || []).filter(function(m) {
+            return m.id && m.id.endsWith(":free") &&
+                m.architecture && Array.isArray(m.architecture.input_modalities) &&
+                m.architecture.input_modalities.indexOf("image") !== -1;
+        }).map(function(m) { return m.id; });
+        const prefs = ["nemotron", "qwen2.5-vl-32b", "qwen2.5-vl", "gemini-2.0-flash-exp", "pixtral", "ling", "qwen"];
+        const scored = [];
         for (const id of matches) {
-            let rank = 99;
+            let rank = 50;
             for (let i = 0; i < prefs.length; i++) {
-                if (id.includes(prefs[i])) { rank = i; break; }
+                if (id.indexOf(prefs[i]) !== -1) { rank = i; break; }
             }
-            if (rank < bestRank) { bestRank = rank; best = id; }
+            scored.push({ id: id, rank: rank });
         }
-        if (!best && matches.length > 0) best = matches[0];
-        if (best) {
-            orVisionModel = best;
-            orModelAt = Date.now();
-            console.log("Vision: OpenRouter model auto-detecte -> " + best);
+        scored.sort(function(a, b) { return a.rank - b.rank; });
+        const top = scored.slice(0, 3).map(function(s) { return s.id; });
+        if (top.length > 0) {
+            orVisionModels = top;
+            orModelsAt = Date.now();
+            console.log("Vision: OpenRouter modeles auto-detectes -> " + top.join(" | "));
         }
-        return best;
-    } catch (e) { return null; }
+        return top;
+    } catch (e) { return orVisionModels || []; }
 }
 
 // ===== LECTURE DES RÉPONSES =====
@@ -190,7 +191,7 @@ async function tryOpenAICompat(name, url, key, model, systemPrompt, instruction,
         }, ms);
         if (!r.ok) {
             const t = await r.text();
-            console.error("Vision " + name + " (" + model + ") -> " + r.status + " " + t.substring(0, 150));
+            console.error("Vision " + name + " (" + model + ") -> " + r.status + " " + t.substring(0, 120));
             return null;
         }
         const d = await r.json();
@@ -202,32 +203,36 @@ async function tryOpenAICompat(name, url, key, model, systemPrompt, instruction,
     }
 }
 
-// Cascade complète : la détection des modèles Groq/OpenRouter démarre EN PARALLÈLE avec Gemini
+// Cascade : la détection démarre EN PARALLÈLE avec Gemini (aucun temps perdu)
 async function callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens) {
     const pGroq = groqKey ? getGroqVisionModel(groqKey) : Promise.resolve(null);
-    const pOr = orKey ? getOpenRouterVisionModel() : Promise.resolve(null);
+    const pOr = orKey ? getOpenRouterVisionModels() : Promise.resolve([]);
 
-    // 1) Gemini (meilleur OCR arabe/français) — 6s
+    // 1) Gemini (meilleur OCR arabe/français)
     if (geminiKey) {
-        const t = await tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
+        const t = await tryGemini(geminiKey, systemPrompt, instruction, mime, base64Img, 5000, maxTokens);
         if (t) return { ok: true, text: t, provider: "Gemini" };
     }
-    // 2) Groq avec modèle détecté automatiquement — 6s
+    // 2) Groq avec modèle détecté automatiquement (qwen3.8-27b actuellement)
     if (groqKey) {
-        const gm = (await pGroq) || "meta-llama/llama-4-scout-17b-16e-instruct";
+        const gm = (await pGroq) || "qwen/qwen3.8-27b";
         const t = await tryOpenAICompat("Groq", "https://api.groq.com/openai/v1/chat/completions", groqKey, gm, systemPrompt, instruction, mime, base64Img, 6000, maxTokens);
         if (t) return { ok: true, text: t, provider: "Groq" };
     }
-    // 3) OpenRouter avec modèle gratuit détecté automatiquement — 5s
+    // 3) OpenRouter : jusqu'à 2 modèles gratuits essayés l'un après l'autre
     if (orKey) {
-        const om = (await pOr) || "meta-llama/llama-3.2-11b-vision-instruct:free";
-        const t = await tryOpenAICompat("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", orKey, om, systemPrompt, instruction, mime, base64Img, 5000, maxTokens);
-        if (t) return { ok: true, text: t, provider: "OpenRouter" };
+        const candidates = (await pOr) || [];
+        if (candidates.length === 0) candidates.push("meta-llama/llama-3.2-11b-vision-instruct:free");
+        const tries = Math.min(2, candidates.length);
+        for (let i = 0; i < tries; i++) {
+            const t = await tryOpenAICompat("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", orKey, candidates[i], systemPrompt, instruction, mime, base64Img, 4000, maxTokens);
+            if (t) return { ok: true, text: t, provider: "OpenRouter" };
+        }
     }
     return { ok: false, text: "", provider: null };
 }
 
-// Extraction défensive du JSON (fonctionne même si le modèle met du texte autour)
+// Extraction défensive du JSON
 function extractJson(text) {
     let c = String(text || "").replace(/```json/g, '').replace(/```/g, '').trim();
     const start = c.indexOf('{');
@@ -254,11 +259,11 @@ export default async function handler(req, res) {
     }
 
     try {
-        // 1. Téléchargement de la photo (côté serveur, avec limites de temps)
-        const fRes = await fetchT(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`, {}, 3000);
+        // 1. Téléchargement de la photo
+        const fRes = await fetchT(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`, {}, 2500);
         const fData = await fRes.json();
         const filePath = fData.result.file_path;
-        const imgRes = await fetchT(`https://api.telegram.org/file/bot${token}/${filePath}`, {}, 3000);
+        const imgRes = await fetchT(`https://api.telegram.org/file/bot${token}/${filePath}`, {}, 2500);
         const base64Img = Buffer.from(await imgRes.arrayBuffer()).toString('base64');
 
         const lower = String(filePath).toLowerCase();
@@ -279,7 +284,7 @@ export default async function handler(req, res) {
 
         // 3. MODES : fiche produit ? Memo/Val ?
         const isFicheMode = /\bfiche\b/i.test(capText);
-        let ficheLang = null; // null = trilingue
+        let ficheLang = null;
         const ficheLangMatch = capText.match(/(?:^|\s)fiche\s+(ar|arabe|العربية|en|english|anglais|fr|français|francais)(?=\s|$)/iu);
         if (ficheLangMatch) {
             const w = ficheLangMatch[1].toLowerCase();
@@ -302,7 +307,7 @@ export default async function handler(req, res) {
             try {
                 const sRes = await fetchT(`${supabaseUrl}/rest/v1/secrets?select=*`, {
                     headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
-                }, 3000);
+                }, 2500);
                 const all = await sRes.json();
                 if (Array.isArray(all)) {
                     const pub = all.filter(s => !s.is_secret && !INTERNAL_KEYS.includes(s.key));
@@ -315,7 +320,7 @@ export default async function handler(req, res) {
             } catch (e) {}
         }
 
-        // 5. Prompts (concaténation simple)
+        // 5. Prompts
         const langName = lang === 'ar' ? 'ARABE' : lang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
         let instruction = "L'utilisateur a envoyé cette photo sans commentaire. Décris-la de façon claire et utile (sujet principal, texte visible important, montants et dates si présents).";
         if (capText) {
@@ -326,7 +331,6 @@ export default async function handler(req, res) {
         let maxTokens = 700;
 
         if (isFicheMode) {
-            // ===== MODE FICHE PRODUIT =====
             maxTokens = 1800;
             const ficheLangName = ficheLang === 'ar' ? 'ARABE' : ficheLang === 'en' ? 'ANGLAIS' : 'FRANÇAIS';
             systemPrompt = "Tu es Scoop, l'assistant personnel de Fateh, expert en vente e-commerce. Tu crées une FICHE PRODUIT à partir de la photo.\n\n";
@@ -349,7 +353,6 @@ export default async function handler(req, res) {
             systemPrompt += "- Sois compact : TOUTE la fiche doit tenir en 3400 caractères maximum.\n";
             systemPrompt += "- Utilise les sauts de ligne pour aérer. Pas de tableau Markdown.";
         } else if (isMemoMode) {
-            // ===== MODE MEMO/VAL : UN SEUL appel renvoie la réponse ET les informations =====
             maxTokens = 800;
             systemPrompt = "Tu es Scoop, l'assistant personnel de Fateh. Tu analyses UNE photo.\n\n";
             systemPrompt += "Tu réponds en JSON STRICT, rien d'autre que ce JSON :\n";
@@ -364,7 +367,6 @@ export default async function handler(req, res) {
             systemPrompt += "- Clés UNIQUES et descriptives (ex: facture_montant_eau, contact_nom).\n";
             systemPrompt += '- Uniquement ce qui est VISIBLE sur la photo. Si rien à enregistrer : "secrets": [].';
         } else {
-            // ===== MODE NORMAL =====
             systemPrompt = "Tu es Scoop, l'assistant personnel de Fateh. Tu analyses UNE photo qu'il t'envoie.\n\n";
             systemPrompt += "RÈGLE DE LANGUE : par défaut, réponds entièrement en " + langName + ".\n";
             systemPrompt += 'EXCEPTION PRIORITAIRE : si la demande exige explicitement une autre langue (ex: "en AR", "in English", "réponds en espagnol"), obéis : réponds dans la langue demandée. Ne dis JAMAIS que tu ne peux pas.\n';
@@ -378,7 +380,7 @@ export default async function handler(req, res) {
             }
         }
 
-        // 6. CASCADE : Gemini -> Groq -> OpenRouter (modèles auto-détectés)
+        // 6. CASCADE : Gemini -> Groq -> OpenRouter (x2 modèles gratuits)
         const gRes = await callVisionCascade(geminiKey, groqKey, orKey, systemPrompt, instruction, mime, base64Img, maxTokens);
         if (!gRes.ok) {
             console.error("Vision: tous les fournisseurs ont échoué");
