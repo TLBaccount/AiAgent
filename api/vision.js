@@ -249,7 +249,8 @@ export default async function handler(req, res) {
             systemPrompt += '- Uniquement ce qui est VISIBLE sur la photo. Si rien à enregistrer : "secrets": [].';
         } else {
             systemPrompt = "Tu es Scoop, l'assistant personnel de Fateh. Tu analyses UNE photo qu'il t'envoie.\n\n";
-            systemPrompt += "RÈGLE ABSOLUE : réponds EXCLUSIVEMENT en " + langName + ".\n";
+            systemPrompt += "RÈGLE DE LANGUE : par défaut, réponds entièrement en " + langName + ".\n";
+            systemPrompt += "EXCEPTION PRIORITAIRE : si la demande exige explicitement une autre langue (ex: \"en AR\", \"in English\", \"réponds en espagnol\"), obéis : réponds dans la langue demandée, même si elle n'est pas dans ta liste. Ne dis JAMAIS que tu ne peux pas.\n";
             systemPrompt += "- Chaleureux, précis, concis (max 15 lignes).\n";
             systemPrompt += "- Si la photo contient du texte (document, facture, panneau...), cite les éléments importants (montants, dates, noms).\n";
             systemPrompt += "- N'invente JAMAIS ce que tu ne vois pas.\n";
