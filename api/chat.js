@@ -574,6 +574,7 @@ TON RÔLE :
                             contents: [{ role: "user", parts: [{ text: userMessage }] }],
                             systemInstruction: { parts: [{ text: activePrompt }] }
                         })
+                        signal: AbortSignal.timeout(6000)
                     });
                     if (response.ok) provider = "Gemini";
                     else { console.error(`Gemini a échoué (${response.status})`); response = null; }
@@ -595,6 +596,7 @@ TON RÔLE :
                             tools: activeTools,
                             tool_choice: "auto"
                         })
+                        signal: AbortSignal.timeout(15000)
                     });
                     if (response.ok) provider = "Groq";
                     else { console.error(`Groq a échoué (${response.status})`); response = null; }
@@ -616,6 +618,7 @@ TON RÔLE :
                             tools: activeTools,
                             tool_choice: "auto"
                         })
+                        signal: AbortSignal.timeout(15000)
                     });
                     if (response.ok) provider = "OpenRouter";
                     else { console.error(`OpenRouter a échoué (${response.status})`); response = null; }
