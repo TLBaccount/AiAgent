@@ -246,10 +246,13 @@ async function getPendingAction(supabaseUrl, supabaseKey) {
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) return null;
         const row = data[0];
-        const age = Date.now() - new Date(row.updated_at).getTime();
-        if (age > 24 * 60 * 60 * 1000) { // expiration 24h
-            await deletePendingAction(supabaseUrl, supabaseKey, row.id);
-            return null;
+        // expiration 24h (si updated_at absent, on garde le brouillon)
+        if (row.updated_at) {
+            const age = Date.now() - new Date(row.updated_at).getTime();
+            if (age > 24 * 60 * 60 * 1000) {
+                await deletePendingAction(supabaseUrl, supabaseKey, row.id);
+                return null;
+            }
         }
         return row;
     } catch (e) { return null; }
@@ -264,7 +267,7 @@ async function savePendingAction(supabaseUrl, supabaseKey, actionType, payload) 
         await fetch(`${supabaseUrl}/rest/v1/pending_actions`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft" })
+            body: JSON.stringify({ action_type: actionType, payload: payload, status: "draft", updated_at: new Date().toISOString() })
         });
     } catch (e) { console.error("Erreur savePendingAction:", e.message); }
 }
@@ -282,7 +285,8 @@ async function updatePendingAction(supabaseUrl, supabaseKey, id, payload) {
 async function deletePendingAction(supabaseUrl, supabaseKey, id) {
     try {
         await fetch(`${supabaseUrl}/rest/v1/pending_actions?id=eq.${id}`, {
-            method: "DELETE", headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            method: "DELETE",
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
         });
     } catch (e) { console.error("Erreur deletePendingAction:", e.message); }
 }
@@ -295,7 +299,8 @@ async function executeWorkflowAction(actionType, payload, supabaseKey, chatId) {
             if (!url) return { ok: false, error: "URL email non configurée" };
             const r = await fetch(url, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: { to: payload.to, subject: payload.subject, body: payload.body }, type: "email", user: agentName })
+                body: JSON.stringify({ action: { to: payload.to, subject: payload.subject, body: payload.body }, type: "email", user: agentName }),
+                signal: AbortSignal.timeout(15000)
             });
             let d = null; try { d = await r.json(); } catch (e) {}
             return { ok: r.ok, result: (d && d.result) || null };
@@ -305,7 +310,8 @@ async function executeWorkflowAction(actionType, payload, supabaseKey, chatId) {
             if (!url) return { ok: false, error: "URL calendrier non configurée" };
             const r = await fetch(url, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: { title: payload.title, date: normalizeDate(payload.date), time: payload.time }, type: "calendar", user: agentName })
+                body: JSON.stringify({ action: { title: payload.title, date: normalizeDate(payload.date), time: payload.time }, type: "calendar", user: agentName }),
+                signal: AbortSignal.timeout(15000)
             });
             let d = null; try { d = await r.json(); } catch (e) {}
             return { ok: r.ok, result: (d && d.result) || null };
@@ -315,13 +321,15 @@ async function executeWorkflowAction(actionType, payload, supabaseKey, chatId) {
             try { parsed = JSON.parse(payload.content); } catch (e) { return { ok: false, error: "Données invalides (JSON)" }; }
             const r = await fetch(`${siteUrl}/api/share`, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: payload.share_type, data: parsed, title: payload.title || "" })
+                body: JSON.stringify({ type: payload.share_type, data: parsed, title: payload.title || "" }),
+                signal: AbortSignal.timeout(15000)
             });
             const d = await r.json();
             if (d.share_url) {
                 const s = await fetch(`${siteUrl}/api/shorten`, {
                     method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ url: d.share_url })
+                    body: JSON.stringify({ url: d.share_url }),
+                    signal: AbortSignal.timeout(10000)
                 });
                 const sd = await s.json();
                 return { ok: true, result: `Lien ${d.tool} : ${sd.short_url || d.share_url}` };
@@ -334,7 +342,8 @@ async function executeWorkflowAction(actionType, payload, supabaseKey, chatId) {
             const r = await fetch(`${supabaseUrl}/rest/v1/reminders`, {
                 method: "POST",
                 headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-                body: JSON.stringify({ text: payload.label, due_at: due.toISOString(), chat_id: chatId || null })
+                body: JSON.stringify({ text: payload.label, due_at: due.toISOString(), chat_id: chatId || null }),
+                signal: AbortSignal.timeout(10000)
             });
             if (!r.ok) {
                 let errTxt = ""; try { errTxt = await r.text(); } catch (e) {}
@@ -413,7 +422,8 @@ export default async function handler(req, res) {
     let fullHistory = [];
     try {
         const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
+            signal: AbortSignal.timeout(5000)
         });
         const hData = await hRes.json();
         if (Array.isArray(hData)) fullHistory = hData.reverse().map(m => ({ role: m.role, content: m.content }));
@@ -573,7 +583,7 @@ TON RÔLE :
                         body: JSON.stringify({
                             contents: [{ role: "user", parts: [{ text: userMessage }] }],
                             systemInstruction: { parts: [{ text: activePrompt }] }
-                        })
+                        }),
                         signal: AbortSignal.timeout(6000)
                     });
                     if (response.ok) provider = "Gemini";
@@ -595,7 +605,7 @@ TON RÔLE :
                             messages: [{ role: "system", content: activePrompt }, ...fullHistory, { role: "user", content: userMessage }],
                             tools: activeTools,
                             tool_choice: "auto"
-                        })
+                        }),
                         signal: AbortSignal.timeout(15000)
                     });
                     if (response.ok) provider = "Groq";
@@ -617,7 +627,7 @@ TON RÔLE :
                             messages: [{ role: "system", content: activePrompt }, ...fullHistory, { role: "user", content: userMessage }],
                             tools: activeTools,
                             tool_choice: "auto"
-                        })
+                        }),
                         signal: AbortSignal.timeout(15000)
                     });
                     if (response.ok) provider = "OpenRouter";
@@ -663,7 +673,8 @@ TON RÔLE :
                     if (functionName === "shorten_url") {
                         const shortenRes = await fetch(`${siteUrl}/api/shorten`, {
                             method: "POST", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ url: functionArgs.url })
+                            body: JSON.stringify({ url: functionArgs.url }),
+                            signal: AbortSignal.timeout(10000)
                         });
                         const shortenData = await shortenRes.json();
                         return respond(res, supabaseUrl, supabaseKey, userMessage, `🔗 Lien court : ${shortenData.short_url}`, currentLang);
@@ -675,7 +686,8 @@ TON RÔLE :
                             const tavilyRes = await fetch("https://api.tavily.com/search", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.TAVILY_API_KEY}` },
-                                body: JSON.stringify({ query: functionArgs.query || userMessage, max_results: 4, search_depth: "basic" })
+                                body: JSON.stringify({ query: functionArgs.query || userMessage, max_results: 4, search_depth: "basic" }),
+                                signal: AbortSignal.timeout(10000)
                             });
                             if (tavilyRes.ok) {
                                 const tavilyData = await tavilyRes.json();
@@ -747,7 +759,8 @@ async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) 
         await fetch(`${supabaseUrl}/rest/v1/messages`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }])
+            body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }]),
+            signal: AbortSignal.timeout(5000)
         });
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
     return res.status(200).json({ reply: botReply, lang });
@@ -758,7 +771,8 @@ function estimateTokens(text) { return Math.ceil(String(text || "").length / 4);
 async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
+            signal: AbortSignal.timeout(5000)
         });
         const messages = await res.json();
         if (!Array.isArray(messages)) return;
@@ -768,7 +782,8 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
             const idsToDelete = messages.slice(0, messagesToDelete).map(m => m.id);
             await fetch(`${supabaseUrl}/rest/v1/messages?id=in.(${idsToDelete.join(',')})`, {
                 method: "DELETE",
-                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+                headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
+                signal: AbortSignal.timeout(5000)
             });
         }
     } catch (error) { console.error("Erreur nettoyage:", error); }
@@ -777,7 +792,8 @@ async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
 async function getSecrets(supabaseUrl, supabaseKey) {
     try {
         const res = await fetch(`${supabaseUrl}/rest/v1/secrets?select=*`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }
+            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
+            signal: AbortSignal.timeout(5000)
         });
         const data = await res.json();
         return Array.isArray(data) ? data : [];
@@ -790,7 +806,7 @@ async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecr
     const scriptOfNew = isArabicScript(value) ? 'ar' : 'latin';
     const existingRes = await fetch(
         `${supabaseUrl}/rest/v1/secrets?user_id=eq.${userId}&key=eq.${encodeURIComponent(key)}`,
-        { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` } }
+        { headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` }, signal: AbortSignal.timeout(5000) }
     );
     const existing = await existingRes.json();
     const match = Array.isArray(existing)
@@ -800,13 +816,15 @@ async function upsertSecret(supabaseUrl, supabaseKey, userId, key, value, isSecr
         await fetch(`${supabaseUrl}/rest/v1/secrets?id=eq.${match.id}`, {
             method: "PATCH",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ value: value, is_secret: isSecret })
+            body: JSON.stringify({ value: value, is_secret: isSecret }),
+            signal: AbortSignal.timeout(5000)
         });
     } else {
         await fetch(`${supabaseUrl}/rest/v1/secrets`, {
             method: "POST",
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, key: key, value: value, is_secret: isSecret })
+            body: JSON.stringify({ user_id: userId, key: key, value: value, is_secret: isSecret }),
+            signal: AbortSignal.timeout(5000)
         });
     }
 }
@@ -830,7 +848,8 @@ RÈGLE N°3 : Mobile par défaut → tel_mobile_XXX ; "fixe" explicite → tel_f
 Réponds en JSON : {"secrets": [{"key": "...", "value": "...", "is_secret": true}]}. Si rien : {"secrets": []}.` },
                     { role: "user", content: `Utilisateur: ${message}\nScoop: ${botReply}` }
                 ]
-            })
+            }),
+            signal: AbortSignal.timeout(10000)
         });
         const data = await response.json();
         let content = String(data.choices[0].message.content || "").trim();
