@@ -1,5 +1,33 @@
+// Envoi Telegram avec repli : si le Markdown est mal formé (ex: un "_" ou "*" isolé), on renvoie en texte simple
+async function tgSend(token, payload) {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const headers = { "Content-Type": "application/json" };
+    let r = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+    if (!r.ok && payload.parse_mode) {
+        const plain = Object.assign({}, payload);
+        delete plain.parse_mode;
+        r = await fetch(url, { method: "POST", headers, body: JSON.stringify(plain) });
+    }
+    return r;
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
+        return res.status(200).json({ ok: true });
+    }
+
+    // 🔐 Sécurité 1 : le webhook doit présenter le secret configuré chez Telegram (si TELEGRAM_WEBHOOK_SECRET est défini)
+    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    if (webhookSecret && req.headers['x-telegram-bot-api-secret-token'] !== webhookSecret) {
+        return res.status(401).json({ ok: false });
+    }
+
+    // 🔐 Sécurité 2 : seul TON chat est autorisé (si TELEGRAM_CHAT_ID / TELEGRAM_ALLOWED_CHAT_ID est défini)
+    const ownerChat = process.env.TELEGRAM_ALLOWED_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+    const incomingChat = req.body && ((req.body.callback_query && req.body.callback_query.message && req.body.callback_query.message.chat && req.body.callback_query.message.chat.id) ||
+        (req.body.message && req.body.message.chat && req.body.message.chat.id));
+    if (ownerChat && incomingChat && String(incomingChat) !== String(ownerChat)) {
+        console.log("Chat non autorisé ignoré:", incomingChat);
         return res.status(200).json({ ok: true });
     }
 
@@ -31,17 +59,14 @@ export default async function handler(req, res) {
             const chatResponse = await fetch(`${siteUrl}/api/chat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "x-scoop-code": process.env.SCOOP_WEB_CODE || "" },
-                body: JSON.stringify({ message: actionText, channel: "telegram" })
+                body: JSON.stringify({ message: actionText, channel: "telegram", chat_id: chatId })
             });
             let replyText = "❌ Erreur interne.";
             if (chatResponse.ok) {
                 const d = await chatResponse.json();
                 replyText = d.reply || replyText;
             }
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ chat_id: chatId, text: replyText, parse_mode: "Markdown" })
-            });
+            await tgSend(token, { chat_id: chatId, text: replyText, parse_mode: "Markdown" });
         } catch (e) { console.error("Erreur callback:", e.message); }
         return res.status(200).json({ ok: true });
     }
@@ -162,7 +187,8 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 message: userText,
                 forcedLang: detectedLang,
-                channel: "telegram"
+                channel: "telegram",
+                chat_id: chatId
             })
         });
 
@@ -180,10 +206,7 @@ export default async function handler(req, res) {
                 { text: "❌ Annuler", callback_data: "wf_cancel" }
             ]] };
         }
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(sendPayload)
-        });
+        await tgSend(token, sendPayload);
 
         // Envoi de la voix UNIQUEMENT si le message était vocal
         if (isVoice) {
