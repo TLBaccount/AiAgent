@@ -246,10 +246,10 @@ async function getPendingAction(supabaseUrl, supabaseKey) {
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) return null;
         const row = data[0];
-        // expiration 24h (si updated_at absent, on garde le brouillon)
+        // expiration 30 min : un "oui" tardif ne doit pas déclencher un vieux brouillon
         if (row.updated_at) {
             const age = Date.now() - new Date(row.updated_at).getTime();
-            if (age > 24 * 60 * 60 * 1000) {
+            if (age > 30 * 60 * 1000) {
                 await deletePendingAction(supabaseUrl, supabaseKey, row.id);
                 return null;
             }
@@ -362,8 +362,13 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     if (!checkAuth(req)) return res.status(401).json({ error: 'Accès refusé' });
 
+    // Budget de temps global : Vercel coupe à 30 s, on se garde une marge
+    const t0 = Date.now();
+    const left = (max) => Math.max(1500, Math.min(max, 26000 - (Date.now() - t0)));
+
     const { forcedLang, channel } = req.body;
     const currentChannel = channel === "telegram" ? "telegram" : "web";
+    res._scoopChannel = currentChannel; // utilisé par respond() pour sauvegarder dans le bon canal
     let userMessage = String(req.body.message || '').trim();
     if (!userMessage) return res.status(400).json({ error: 'Message manquant' });
 
@@ -372,7 +377,8 @@ export default async function handler(req, res) {
 
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
-    await cleanupIfNeeded(supabaseUrl, supabaseKey);
+    // Nettoyage de l'historique : inutile à chaque message (1 requête sur 10 suffit)
+    if (Math.random() < 0.1) await cleanupIfNeeded(supabaseUrl, supabaseKey);
 
     // DÉTECTION DE LA LANGUE
     let currentLang = forcedLang;
@@ -412,22 +418,18 @@ export default async function handler(req, res) {
     // Intention rappel (filet de sécurité : renforce la consigne, ne crée JAMAIS directement)
     const reminderIntent = /rappelle[\s-]*moi|remind\s+me|ذكّ?رني|تذكير/i.test(userMessage);
 
-    const secrets = await getSecrets(supabaseUrl, supabaseKey);
+    // Chargements lancés EN PARALLÈLE (gain de temps à chaque message)
+    const pSecrets = getSecrets(supabaseUrl, supabaseKey);
+    const pHistory = loadServerHistory(supabaseUrl, supabaseKey, currentChannel);
+    const pPending = getPendingAction(supabaseUrl, supabaseKey);
+    const secrets = await pSecrets;
     const publicInfo = Array.isArray(secrets) ? secrets.filter(s => !s.is_secret) : [];
     const privateSecrets = wantsSecrets && Array.isArray(secrets) ? secrets.filter(s => s.is_secret) : [];
     const publicText = publicInfo.length > 0 ? publicInfo.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucune information connue.";
     const privateText = privateSecrets.length > 0 ? privateSecrets.map(s => `${s.key}: ${s.value}`).join('\n') : "Aucun secret enregistré.";
 
-    // Historique côté serveur (20 derniers messages)
-    let fullHistory = [];
-    try {
-        const hRes = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.desc&limit=20`, {
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
-            signal: AbortSignal.timeout(5000)
-        });
-        const hData = await hRes.json();
-        if (Array.isArray(hData)) fullHistory = hData.reverse().map(m => ({ role: m.role, content: m.content }));
-    } catch (e) { console.error("Erreur historique:", e.message); }
+    // Historique côté serveur (20 derniers messages du MÊME canal)
+    const fullHistory = await pHistory;
 
     try {
         if (shouldExtractSecrets) {
@@ -436,7 +438,7 @@ export default async function handler(req, res) {
         }
 
         // ===== WORKFLOW : BROUILLON EN COURS ? =====
-        const pending = await getPendingAction(supabaseUrl, supabaseKey);
+        const pending = await pPending;
         const t = WF[currentLang] || WF.fr;
 
         // 1) ANNULATION (décidée par le SERVEUR, pas le LLM)
@@ -571,29 +573,10 @@ TON RÔLE :
 
         let response = null;
         let provider = null;
+        let geminiData = null;
 
-        // TENTATIVE 1 : GEMINI (seulement hors brouillon — pas de tools)
-        if (!pending) {
-            const geminiKey = process.env.GOOGLE_AI_KEY;
-            if (geminiKey) {
-                try {
-                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            contents: [{ role: "user", parts: [{ text: userMessage }] }],
-                            systemInstruction: { parts: [{ text: activePrompt }] }
-                        }),
-                        signal: AbortSignal.timeout(6000)
-                    });
-                    if (response.ok) provider = "Gemini";
-                    else { console.error(`Gemini a échoué (${response.status})`); response = null; }
-                } catch (e) { console.error("Erreur Gemini:", e.message); response = null; }
-            }
-        }
-
-        // TENTATIVE 2 : GROQ
-        if (!provider) {
+        // TENTATIVE 1 : GROQ (rapide, gère les outils et l'historique)
+        {
             const groqKey = process.env.GROQ_API_KEY;
             if (groqKey) {
                 try {
@@ -602,15 +585,45 @@ TON RÔLE :
                         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${groqKey}` },
                         body: JSON.stringify({
                             model: "openai/gpt-oss-20b",
+                            reasoning_effort: "low",
                             messages: [{ role: "system", content: activePrompt }, ...fullHistory, { role: "user", content: userMessage }],
                             tools: activeTools,
                             tool_choice: "auto"
                         }),
-                        signal: AbortSignal.timeout(15000)
+                        signal: AbortSignal.timeout(left(14000))
                     });
                     if (response.ok) provider = "Groq";
                     else { console.error(`Groq a échoué (${response.status})`); response = null; }
                 } catch (e) { console.error("Erreur Groq:", e.message); response = null; }
+            }
+        }
+
+        // TENTATIVE 2 : GEMINI (secours conversationnel AVEC historique, sans outils)
+        if (!provider && !pending) {
+            const geminiKey = process.env.GOOGLE_AI_KEY;
+            if (geminiKey) {
+                const models = (process.env.GEMINI_MODELS || "gemini-3.8-flash,gemini-3.5-flash-lite").split(",").map(s => s.trim()).filter(Boolean);
+                for (const model of models) {
+                    try {
+                        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
+                            body: JSON.stringify({
+                                contents: toGeminiContents(fullHistory, userMessage),
+                                systemInstruction: { parts: [{ text: activePrompt }] }
+                            }),
+                            signal: AbortSignal.timeout(left(5000))
+                        });
+                        if (!r.ok) { console.error(`Gemini ${model} a échoué (${r.status})`); continue; }
+                        const gd = await r.json();
+                        const gt = gd && gd.candidates && gd.candidates[0] && gd.candidates[0].content && gd.candidates[0].content.parts
+                            ? gd.candidates[0].content.parts.map(p => p.text || "").join("").trim() : "";
+                        if (!gt) { console.error(`Gemini ${model} : réponse vide`); continue; }
+                        geminiData = gd;
+                        provider = "Gemini";
+                        break;
+                    } catch (e) { console.error(`Erreur Gemini ${model}:`, e.message); }
+                }
             }
         }
 
@@ -628,7 +641,7 @@ TON RÔLE :
                             tools: activeTools,
                             tool_choice: "auto"
                         }),
-                        signal: AbortSignal.timeout(15000)
+                        signal: AbortSignal.timeout(left(10000))
                     });
                     if (response.ok) provider = "OpenRouter";
                     else { console.error(`OpenRouter a échoué (${response.status})`); response = null; }
@@ -639,11 +652,11 @@ TON RÔLE :
         if (!provider) throw new Error("Aucun fournisseur LLM n'a répondu");
         console.log(`Réponse obtenue via ${provider}`);
 
-        const data = await response.json();
+        const data = provider === "Gemini" ? geminiData : await response.json();
         let botText = "";
 
         if (provider === "Gemini") {
-            botText = data.candidates[0].content.parts[0].text.trim();
+            botText = data.candidates[0].content.parts.map(p => p.text || "").join("").trim();
         } else {
             const responseMessage = data.choices[0].message;
 
@@ -756,21 +769,61 @@ TON RÔLE :
 // Sauvegarde unique (user + assistant) puis réponse
 async function respond(res, supabaseUrl, supabaseKey, userText, botReply, lang) {
     try {
-        await fetch(`${supabaseUrl}/rest/v1/messages`, {
-            method: "POST",
-            headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
-            body: JSON.stringify([{ role: "user", content: userText }, { role: "assistant", content: botReply }]),
+        const channel = res._scoopChannel || "web";
+        // Un message contenant "Memo" ne doit JAMAIS rester lisible dans l'historique (sinon le LLM le relit sans "Scoop")
+        const isMemo = /(?<![\p{L}\p{N}_])memo(?![\p{L}\p{N}_])/iu.test(String(userText || ""));
+        const storedUser = isMemo ? "🔒 (information secrète enregistrée)" : userText;
+        const headers = { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}`, "Content-Type": "application/json", "Prefer": "return=minimal" };
+        let r = await fetch(`${supabaseUrl}/rest/v1/messages`, {
+            method: "POST", headers,
+            body: JSON.stringify([{ role: "user", content: storedUser, channel }, { role: "assistant", content: botReply, channel }]),
             signal: AbortSignal.timeout(5000)
         });
+        if (!r.ok) {
+            // Repli : colonne "channel" absente → on sauvegarde sans
+            r = await fetch(`${supabaseUrl}/rest/v1/messages`, {
+                method: "POST", headers,
+                body: JSON.stringify([{ role: "user", content: storedUser }, { role: "assistant", content: botReply }]),
+                signal: AbortSignal.timeout(5000)
+            });
+        }
     } catch (e) { console.error("Erreur sauvegarde:", e.message); }
     return res.status(200).json({ reply: botReply, lang });
+}
+
+// Historique serveur filtré par canal (repli sans filtre si la colonne n'existe pas)
+async function loadServerHistory(supabaseUrl, supabaseKey, channel) {
+    const headers = { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` };
+    try {
+        let r = await fetch(`${supabaseUrl}/rest/v1/messages?select=role,content&channel=eq.${channel}&order=id.desc&limit=20`, { headers, signal: AbortSignal.timeout(5000) });
+        let d = await r.json();
+        if (!Array.isArray(d)) {
+            r = await fetch(`${supabaseUrl}/rest/v1/messages?select=role,content&order=id.desc&limit=20`, { headers, signal: AbortSignal.timeout(5000) });
+            d = await r.json();
+        }
+        return Array.isArray(d) ? d.reverse().map(m => ({ role: m.role, content: m.content })) : [];
+    } catch (e) { console.error("Erreur historique:", e.message); return []; }
+}
+
+// Historique OpenAI → format Gemini (rôles user/model, messages consécutifs fusionnés, commence par user)
+function toGeminiContents(history, userMessage) {
+    const out = [];
+    for (const m of [...history, { role: "user", content: userMessage }]) {
+        const role = m.role === "assistant" ? "model" : "user";
+        const text = String(m.content || "");
+        if (!text) continue;
+        if (out.length === 0 && role === "model") continue;
+        if (out.length > 0 && out[out.length - 1].role === role) out[out.length - 1].parts[0].text += "\n" + text;
+        else out.push({ role, parts: [{ text }] });
+    }
+    return out;
 }
 
 function estimateTokens(text) { return Math.ceil(String(text || "").length / 4); }
 
 async function cleanupIfNeeded(supabaseUrl, supabaseKey) {
     try {
-        const res = await fetch(`${supabaseUrl}/rest/v1/messages?select=*&order=id.asc`, {
+        const res = await fetch(`${supabaseUrl}/rest/v1/messages?select=id,content&order=id.asc`, {
             headers: { "apikey": supabaseKey, "Authorization": `Bearer ${supabaseKey}` },
             signal: AbortSignal.timeout(5000)
         });
